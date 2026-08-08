@@ -56,11 +56,15 @@ data class DeviceState(
     val batteryTempC: TelemetryValue<Float> = TelemetryValue.unavailable(),
     val apTempC: TelemetryValue<Float> = TelemetryValue.unavailable(),
     val thermalStatus: TelemetryValue<ThermalStatusLevel> = TelemetryValue.unavailable(),
+    val thermalHeadroom: TelemetryValue<Float> = TelemetryValue.unavailable(),
+    val thermalForecastHeadroom: TelemetryValue<Float> = TelemetryValue.unavailable(),
     val memoryAvailableMb: TelemetryValue<Long> = TelemetryValue.unavailable(),
     val memoryPsiAvg10: TelemetryValue<Float> = TelemetryValue.unavailable(),
     val isScreenOn: TelemetryValue<Boolean> = TelemetryValue.unavailable(),
     val foregroundPackage: TelemetryValue<String> = TelemetryValue.unavailable(),
     val activeRefreshRateMode: TelemetryValue<Int> = TelemetryValue.unavailable(),
+    val effectiveRefreshRateHz: TelemetryValue<Float> = TelemetryValue.unavailable(),
+    val displayState: TelemetryValue<String> = TelemetryValue.unavailable(),
     val privilegeTier: PrivilegeTier = PrivilegeTier.TIER_0_STOCK
 )
 
@@ -122,5 +126,6 @@ data class ActionHistoryRecord(
     val previousValue: String?,
     val requestedValue: String?,
     val verifiedValue: String?,
-    val rolledBack: Boolean = false
+    val rolledBack: Boolean = false,
+    val restored: Boolean = false
 )

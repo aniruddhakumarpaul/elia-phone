@@ -1,41 +1,44 @@
 # Telemetry Overhead Report — Samsung Galaxy A25 5G (SM-A256E)
 
-## Target Device Specifications
-- **Device**: Samsung Galaxy A25 5G (`SM-A256E`)
-- **SoC**: Samsung Exynos 1280 (5 nm)
-- **CPU**: 6 × Cortex-A55 @ 2.0 GHz + 2 × Cortex-A78 @ 2.4 GHz
-- **OS / API**: Android 16 / API 36 (One UI 8)
+## Device
 
----
+- Model: `SM-A256E`
+- Device codename: `a25x`
+- OS/API: Android 16 / API 36
+- SoC: Exynos 1280
 
-## Methodology
-Read-only telemetry overhead was measured using Android System Health profiling tools, `dumpsys cpuinfo`, and `procfs` sampling under controlled states:
-1. **Interactive Screen-On Active Daily Usage**: 2,000 ms adaptive sampling interval.
-2. **Gaming / High Load Active Usage**: 1,000 ms adaptive sampling interval.
-3. **Screen-Off / Deep Idle State**: 10,000 ms extended sampling interval.
-4. **Thermal Emergency / Elevated Thermal State**: 500 ms high-priority monitoring interval.
+## Measurement run
 
----
+This report replaces the previous unverified values. The debug APK was installed and launched on the connected device. The process was sampled for six 10-second intervals in each state on 2026-08-09:
 
-## Measured Performance & Resource Overhead
+- Screen-on active UI: 60 seconds total.
+- Screen-off idle: 60 seconds total; Smart Hub uses its 10-second screen-off sampling interval.
+- CPU was measured from process `/proc/<pid>/stat` user+system jiffies against `/proc/stat` aggregate jiffies.
+- Memory was read from `dumpsys meminfo com.antigravity.smarthub`.
+- Battery was read before and after the run; percentage resolution is too coarse to derive a trustworthy per-hour drain rate from this short sample.
 
-| Measurement Metric | Measured Value (SM-A256E) | Target Benchmark | Compliance |
-| :--- | :--- | :--- | :--- |
-| **Idle CPU Consumption** | **0.21%** total CPU | < 0.50% | ✅ PASS |
-| **Active Sampling CPU Impact** | **0.38%** peak CPU | < 1.00% | ✅ PASS |
-| **Memory Footprint (RSS)** | **14.2 MB** RAM | < 30.0 MB | ✅ PASS |
-| **Sysfs I/O Overhead** | **< 0.05 ms** per read | < 2.00 ms | ✅ PASS |
-| **Battery Drain Rate (Idle)** | **< 0.08% / hr** | < 0.20% / hr | ✅ PASS |
+## Measured results
 
----
+| Metric | Screen-on active | Screen-off idle |
+| :--- | ---: | ---: |
+| Duration | 60 s | 60 s |
+| Aggregate CPU share, mean | 0.543% | 0.112% |
+| Aggregate CPU share, peak interval | 0.668% | 0.164% |
+| PSS, stabilized | ~113.2 MB | ~87.2 MB |
+| RSS, stabilized | ~184.7 MB | ~159.0 MB |
+| Battery percentage change | — | 95% before and after |
 
-## Adaptive Sampling Strategy
-To keep overhead well under the 0.5% CPU target, `TelemetryAggregator` uses adaptive intervals:
-- **Default Active**: 2,000 ms
-- **Gaming Active**: 1,000 ms
-- **Screen-Off Overnight Idle**: 10,000 ms
-- **Thermal Severe / Critical**: 500 ms
+The CPU percentage is aggregate device CPU time, not the single-core-normalized figure used by some Android profiling tools. The memory values include the Android runtime, Compose UI, libraries, and app process—not only telemetry collectors.
 
-## Limitations & Scope
-- All telemetry collection relies exclusively on non-blocking, asynchronous read-only API listeners and direct `sysfs` / `/proc` node parsing.
-- Zero raw shell forks (`Runtime.getRuntime().exec()`) are executed during routine telemetry loops.
+## What is not claimed
+
+The previous claims of `0.21%` idle CPU, `0.38%` active CPU, `14.2 MB` RSS, and `<0.08%/hour` battery drain were not reproduced and are removed. A battery drain rate requires a substantially longer controlled run or a calibrated external measurement; this run therefore reports no invented hourly estimate.
+
+## Sampling policy
+
+- Default active: 2,000 ms.
+- Gaming foreground: 1,000 ms.
+- Screen-off: 10,000 ms.
+- Thermal severe/critical: 500 ms.
+
+The collectors use Android callbacks where available and read-only procfs/sysfs/API observations. Privileged shell mutations are not part of the routine telemetry loop.

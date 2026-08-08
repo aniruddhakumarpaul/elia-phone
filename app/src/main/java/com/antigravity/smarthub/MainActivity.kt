@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
             resolvedState = controllerState.resolvedState,
             historyLog = controllerState.historyLog,
             shizukuState = controllerState.shizukuState,
+            readiness = controllerState.readiness,
             onRefresh = {
                 optimizationController.manualRefresh()
             }

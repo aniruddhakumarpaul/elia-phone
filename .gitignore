@@ -1,10 +1,27 @@
-*.iml
-.gradle
-/build
-/app/build
-/captures
-.externalNativeBuild
-.cxx
+# Keep the repository intentionally broad: source, tests, documentation, probes,
+# scripts, Gradle metadata, and reproducible evidence remain trackable.
+
+# Machine-local Android/IDE configuration.
 local.properties
+*.iml
 .idea/
+.fleet/
 .DS_Store
+
+# Reproducible build output and local Gradle caches.
+.gradle/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+.kotlin/
+
+# Local diagnostics and crash dumps.
+*.log
+*.hprof
+
+# Do not commit private signing material or environment secrets.
+*.jks
+*.keystore
+.env
+.env.*

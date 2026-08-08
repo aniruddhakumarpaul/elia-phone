@@ -21,7 +21,9 @@ class AppClassifier {
         "com.sec.android.app.clockpackage",
         "com.google.android.deskclock",
         "com.android.mms",
-        "com.samsung.android.messaging"
+        "com.samsung.android.messaging",
+        "com.android.emergency",
+        "com.samsung.android.emergency"
     )
 
     private val protectedPackages = setOf(
@@ -59,13 +61,23 @@ class AppClassifier {
         "com.ubercab"
     )
 
+    private val explicitlyRestrictablePackages = setOf(
+        "com.google.android.youtube",
+        "com.google.android.apps.youtube.music",
+        "com.spotify.music",
+        "com.netflix.mediaclient"
+    )
+
     fun classifyApp(packageName: String): AppClassification {
         val lower = packageName.lowercase()
         return when {
             neverTouchPackages.contains(lower) -> AppClassification.NEVER_TOUCH
             protectedPackages.contains(lower) -> AppClassification.PROTECTED
-            lower.contains("launcher") || lower.contains("systemui") -> AppClassification.NEVER_TOUCH
-            lower.contains("bank") || lower.contains("pay") || lower.contains("auth") -> AppClassification.PROTECTED
+            lower.contains("launcher") || lower.contains("systemui") || lower.contains("accessibility") -> AppClassification.NEVER_TOUCH
+            lower.contains("emergency") || lower.contains("sos") -> AppClassification.NEVER_TOUCH
+            lower.contains("bank") || lower.contains("pay") || lower.contains("auth") ||
+                    lower.contains("password") || lower.contains("delivery") || lower.contains("logistics") -> AppClassification.PROTECTED
+            explicitlyRestrictablePackages.contains(lower) -> AppClassification.BACKGROUND_RESTRICTABLE
             else -> AppClassification.NORMAL
         }
     }
@@ -73,5 +85,11 @@ class AppClassifier {
     fun isProtected(packageName: String): Boolean {
         val classification = classifyApp(packageName)
         return classification == AppClassification.NEVER_TOUCH || classification == AppClassification.PROTECTED
+    }
+
+    fun canAutomaticallyRestrict(packageName: String): Boolean = when (classifyApp(packageName)) {
+        AppClassification.BACKGROUND_RESTRICTABLE,
+        AppClassification.AGGRESSIVELY_RESTRICTABLE -> true
+        else -> false
     }
 }

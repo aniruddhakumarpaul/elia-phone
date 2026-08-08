@@ -98,7 +98,7 @@ class TelemetryAggregator(
 
     fun calculateAdaptiveSamplingInterval(snapshot: DeviceTelemetrySnapshot): Long {
         val thermal = snapshot.thermalStatus.value ?: ThermalStatusLevel.NOMINAL
-        val isScreenOn = snapshot.display.value?.isScreenOn ?: true
+        val isScreenOn = snapshot.display.value?.isScreenOn?.value
         val fgPkg = snapshot.foregroundPackage.value ?: ""
 
         val isGaming = fgPkg.contains("pubg") || fgPkg.contains("freefire") || fgPkg.contains("roblox")
@@ -106,7 +106,7 @@ class TelemetryAggregator(
         return when {
             thermal == ThermalStatusLevel.CRITICAL || thermal == ThermalStatusLevel.SEVERE -> 500L
             isGaming -> 1000L
-            !isScreenOn -> 10000L // 10s overnight / screen-off
+            isScreenOn == false -> 10000L // 10s screen-off
             else -> 2000L // 2s daily adaptive default
         }
     }

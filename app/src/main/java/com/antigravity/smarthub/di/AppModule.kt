@@ -60,14 +60,31 @@ object AppModule {
     fun provideSystemActionExecutor(
         connection: ShizukuServiceConnection,
         safetyGovernor: SafetyGovernor,
-        baselineRepository: BaselineRepository
+        baselineRepository: BaselineRepository,
+        displayObserver: DisplayTelemetryObserver
     ): SystemActionExecutor {
-        return SystemActionExecutor(connection, safetyGovernor, baselineRepository)
+        return SystemActionExecutor(
+            connection,
+            safetyGovernor,
+            baselineRepository,
+            effectiveRefreshRateReader = {
+                displayObserver.getDisplayMetrics().value?.physicalRefreshRateHz?.value
+            },
+            stabilizationDelayMs = 750L
+        )
     }
 
     @Provides
     @Singleton
-    fun provideTelemetryAggregator(@ApplicationContext context: Context): TelemetryAggregator {
+    fun provideDisplayTelemetryObserver(@ApplicationContext context: Context): DisplayTelemetryObserver =
+        DisplayTelemetryObserver(context)
+
+    @Provides
+    @Singleton
+    fun provideTelemetryAggregator(
+        @ApplicationContext context: Context,
+        displayObserver: DisplayTelemetryObserver
+    ): TelemetryAggregator {
         val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         val executor = Executors.newSingleThreadExecutor()
 
@@ -76,7 +93,6 @@ object AppModule {
         val zramObserver = ZramTelemetryObserver()
         val batteryObserver = BatteryPowerObserver(context)
         val thermalObserver = ThermalHeadroomObserver(pm, executor)
-        val displayObserver = DisplayTelemetryObserver(context)
         val appContextObserver = AppContextObserver(context)
         val mediaObserver = MediaContextObserver(context)
         val navObserver = NavigationContextObserver(appContextObserver)

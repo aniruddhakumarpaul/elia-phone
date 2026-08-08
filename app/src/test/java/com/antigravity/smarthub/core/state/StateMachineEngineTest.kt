@@ -54,6 +54,17 @@ class StateMachineEngineTest {
     }
 
     @Test
+    fun testUnavailableChargingDoesNotTriggerCriticalBattery() {
+        val state = ExtendedDeviceState(
+            baseState = DeviceState(
+                batteryPercent = TelemetryValue.available(5),
+                isCharging = TelemetryValue.unavailable()
+            )
+        )
+        assertEquals(SmartHubProfile.P5_DAILY_ADAPTIVE, engine.updateState(state, 1000L))
+    }
+
+    @Test
     fun testUnavailableThermalDoesNotTriggerThermalEmergency() {
         val unavailableThermalState = ExtendedDeviceState(
             baseState = DeviceState(
@@ -72,7 +83,7 @@ class StateMachineEngineTest {
             baseState = DeviceState(
                 foregroundPackage = TelemetryValue("com.google.android.apps.youtube.music", TelemetryState.AVAILABLE)
             ),
-            isMediaPlaying = true
+            mediaPlayback = TelemetryValue.available(true)
         )
         engine.updateState(mediaState, currentTimeMs = 1000L) // Candidate set
         val profile = engine.updateState(mediaState, currentTimeMs = 2500L) // Dwell time satisfied (>1000ms)
@@ -85,7 +96,7 @@ class StateMachineEngineTest {
             baseState = DeviceState(
                 isScreenOn = TelemetryValue(false, TelemetryState.AVAILABLE)
             ),
-            isNavigationActive = true,
+            navigationContext = TelemetryValue.available(true),
             currentHourOfDay = 2, // 2:00 AM
             screenOffDurationMs = 1_200_000L // >15 min
         )
@@ -99,14 +110,38 @@ class StateMachineEngineTest {
             baseState = DeviceState(
                 isScreenOn = TelemetryValue(false, TelemetryState.AVAILABLE)
             ),
-            isNavigationActive = false,
-            isMediaPlaying = false,
+            navigationContext = TelemetryValue.available(false),
+            mediaPlayback = TelemetryValue.available(false),
             currentHourOfDay = 2, // 2:00 AM
             screenOffDurationMs = 1_200_000L // >15 min
         )
         engine.updateState(overnightState, currentTimeMs = 1000L) // Candidate set
         val profile = engine.updateState(overnightState, currentTimeMs = 2500L) // Dwell time satisfied (>1000ms)
         assertEquals(SmartHubProfile.P6_OVERNIGHT_DEEP_IDLE, profile)
+    }
+
+    @Test
+    fun testUnknownMediaBlocksOvernightDeepIdle() {
+        val state = ExtendedDeviceState(
+            baseState = DeviceState(isScreenOn = TelemetryValue.available(false)),
+            mediaPlayback = TelemetryValue.unavailable(),
+            navigationContext = TelemetryValue.available(false),
+            currentHourOfDay = 2,
+            screenOffDurationMs = 1_200_000L
+        )
+        assertEquals(SmartHubProfile.P5_DAILY_ADAPTIVE, engine.updateState(state, 1000L))
+    }
+
+    @Test
+    fun testUnknownNavigationBlocksOvernightDeepIdle() {
+        val state = ExtendedDeviceState(
+            baseState = DeviceState(isScreenOn = TelemetryValue.available(false)),
+            mediaPlayback = TelemetryValue.available(false),
+            navigationContext = TelemetryValue.unavailable(),
+            currentHourOfDay = 2,
+            screenOffDurationMs = 1_200_000L
+        )
+        assertEquals(SmartHubProfile.P5_DAILY_ADAPTIVE, engine.updateState(state, 1000L))
     }
 
     @Test

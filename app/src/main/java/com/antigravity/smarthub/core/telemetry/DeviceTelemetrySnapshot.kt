@@ -44,10 +44,11 @@ data class BatteryMetrics(
 )
 
 data class DisplayMetrics(
-    val secureSettingMode: Int?,
-    val physicalRefreshRateHz: Float?,
-    val isScreenOn: Boolean,
-    val displayStateStr: String
+    val secureSettingMode: TelemetryValue<Int> = TelemetryValue.unavailable(),
+    val physicalRefreshRateHz: TelemetryValue<Float> = TelemetryValue.unavailable(),
+    val isScreenOn: TelemetryValue<Boolean> = TelemetryValue.unavailable(),
+    val displayStateStr: TelemetryValue<String> = TelemetryValue.unavailable(),
+    val supportedModesHz: TelemetryValue<List<Float>> = TelemetryValue.unavailable()
 )
 
 data class DeviceTelemetrySnapshot(

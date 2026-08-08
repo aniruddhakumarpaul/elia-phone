@@ -13,6 +13,9 @@ data class TelemetryValue<T>(
     val state: TelemetryState = TelemetryState.UNAVAILABLE,
     val capturedAtMs: Long = System.currentTimeMillis()
 ) {
+    fun isAvailableAndFresh(maxAgeMs: Long, currentTimeMs: Long = System.currentTimeMillis()): Boolean =
+        state == TelemetryState.AVAILABLE && value != null && isFresh(maxAgeMs, currentTimeMs)
+
     fun isFresh(maxAgeMs: Long, currentTimeMs: Long = System.currentTimeMillis()): Boolean {
         return state == TelemetryState.AVAILABLE && (currentTimeMs - capturedAtMs) <= maxAgeMs
     }

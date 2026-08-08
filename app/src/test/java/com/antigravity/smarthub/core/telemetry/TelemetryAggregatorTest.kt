@@ -27,21 +27,21 @@ class TelemetryAggregatorTest {
 
         // 1. Daily adaptive default
         val dailySnapshot = DeviceTelemetrySnapshot(
-            display = TelemetryValue(DisplayMetrics(0, 120.0f, true, "STATE_ON"), TelemetryState.AVAILABLE),
+            display = TelemetryValue(DisplayMetrics(TelemetryValue.available(0), TelemetryValue.available(120.0f), TelemetryValue.available(true), TelemetryValue.available("STATE_ON")), TelemetryState.AVAILABLE),
             foregroundPackage = TelemetryValue("com.android.settings", TelemetryState.AVAILABLE)
         )
         assertEquals(2000L, aggregator.calculateAdaptiveSamplingInterval(dailySnapshot))
 
         // 2. Gaming high-load
         val gamingSnapshot = DeviceTelemetrySnapshot(
-            display = TelemetryValue(DisplayMetrics(0, 120.0f, true, "STATE_ON"), TelemetryState.AVAILABLE),
+            display = TelemetryValue(DisplayMetrics(TelemetryValue.available(0), TelemetryValue.available(120.0f), TelemetryValue.available(true), TelemetryValue.available("STATE_ON")), TelemetryState.AVAILABLE),
             foregroundPackage = TelemetryValue("com.pubg.imobile", TelemetryState.AVAILABLE)
         )
         assertEquals(1000L, aggregator.calculateAdaptiveSamplingInterval(gamingSnapshot))
 
         // 3. Screen-off / overnight
         val screenOffSnapshot = DeviceTelemetrySnapshot(
-            display = TelemetryValue(DisplayMetrics(0, 60.0f, false, "STATE_OFF"), TelemetryState.AVAILABLE)
+            display = TelemetryValue(DisplayMetrics(TelemetryValue.available(0), TelemetryValue.available(60.0f), TelemetryValue.available(false), TelemetryValue.available("STATE_OFF")), TelemetryState.AVAILABLE)
         )
         assertEquals(10000L, aggregator.calculateAdaptiveSamplingInterval(screenOffSnapshot))
 

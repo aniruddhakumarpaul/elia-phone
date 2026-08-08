@@ -16,12 +16,10 @@ class DisplayTelemetryObserver(
         try {
             val secureSettingMode = try {
                 Settings.Secure.getInt(context.contentResolver, "refresh_rate_mode")
-            } catch (e: Exception) {
-                null
-            }
+            } catch (_: Exception) { null }
 
             val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-            val isScreenOn = pm?.isInteractive ?: true
+            val isScreenOn = pm?.isInteractive
 
             val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
             val defaultDisplay = dm?.getDisplay(Display.DEFAULT_DISPLAY)
@@ -37,13 +35,27 @@ class DisplayTelemetryObserver(
             }
 
             val metrics = DisplayMetrics(
-                secureSettingMode = secureSettingMode,
-                physicalRefreshRateHz = physicalRefreshRateHz,
-                isScreenOn = isScreenOn,
-                displayStateStr = displayStateStr
+                secureSettingMode = secureSettingMode?.let { TelemetryValue.available(it) }
+                    ?: TelemetryValue.unavailable(),
+                physicalRefreshRateHz = physicalRefreshRateHz?.takeIf { it.isFinite() && it > 0f }
+                    ?.let { TelemetryValue.available(it) }
+                    ?: TelemetryValue.unavailable(),
+                isScreenOn = isScreenOn?.let { TelemetryValue.available(it) }
+                    ?: TelemetryValue.unavailable(),
+                displayStateStr = if (defaultDisplay != null) TelemetryValue.available(displayStateStr)
+                    else TelemetryValue.unavailable(),
+                supportedModesHz = defaultDisplay?.supportedModes
+                    ?.map { it.refreshRate }
+                    ?.filter { it.isFinite() && it > 0f }
+                    ?.distinct()
+                    ?.sorted()
+                    ?.let { TelemetryValue.available(it) }
+                    ?: TelemetryValue.unavailable()
             )
 
-            return TelemetryValue(metrics, TelemetryState.AVAILABLE)
+            // The container is available when the observer ran; individual fields retain
+            // their own quality so a missing PowerManager/display cannot become a fake value.
+            return TelemetryValue.available(metrics)
         } catch (e: Exception) {
             return TelemetryValue.unavailable()
         }

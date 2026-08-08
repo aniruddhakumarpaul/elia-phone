@@ -14,6 +14,7 @@ import com.antigravity.smarthub.core.model.ActionHistoryRecord
 import com.antigravity.smarthub.core.model.DeviceState
 import com.antigravity.smarthub.core.model.PrivilegeTier
 import com.antigravity.smarthub.core.state.ResolvedState
+import com.antigravity.smarthub.core.state.PolicyReadiness
 import com.antigravity.smarthub.core.telemetry.TelemetryState
 import com.antigravity.smarthub.platform.shizuku.ShizukuState
 
@@ -24,6 +25,7 @@ fun DashboardScreen(
     resolvedState: ResolvedState,
     historyLog: List<ActionHistoryRecord> = emptyList(),
     shizukuState: ShizukuState = ShizukuState.DISCONNECTED,
+    readiness: PolicyReadiness = PolicyReadiness(),
     onRefresh: () -> Unit = {}
 ) {
     Scaffold(
@@ -105,6 +107,33 @@ fun DashboardScreen(
                 }
             }
 
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (readiness.isReady) MaterialTheme.colorScheme.secondaryContainer
+                        else MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text("POLICY TELEMETRY GATE", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text(
+                            text = readiness.displayText,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        if (!readiness.isReady) {
+                            Text(
+                                "Smart Hub is observational; no privileged mutation will run.",
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
             // 2. Hardware Telemetry Metrics Header
             item {
                 Text(
@@ -117,9 +146,13 @@ fun DashboardScreen(
             // Row 1: Battery & Thermal
             item {
                 val bVal = if (deviceState.batteryPercent.state == TelemetryState.AVAILABLE) "${deviceState.batteryPercent.value}%" else "UNAVAILABLE"
-                val isChg = deviceState.isCharging.value ?: false
+                val isChg = deviceState.isCharging.value
                 val bTemp = if (deviceState.batteryTempC.state == TelemetryState.AVAILABLE) "${deviceState.batteryTempC.value}°C" else "N/A"
-                val bSub = if (isChg) "Charging ($bTemp)" else "Discharging ($bTemp)"
+                val bSub = when (isChg) {
+                    true -> "Charging ($bTemp)"
+                    false -> "Not charging ($bTemp)"
+                    null -> "Charging state unavailable ($bTemp)"
+                }
 
                 val tVal = if (deviceState.thermalStatus.state == TelemetryState.AVAILABLE) deviceState.thermalStatus.value?.name ?: "UNKNOWN" else "UNAVAILABLE"
                 val apTemp = if (deviceState.apTempC.state == TelemetryState.AVAILABLE) "${deviceState.apTempC.value}°C" else "N/A"
@@ -150,7 +183,7 @@ fun DashboardScreen(
                     if (refMode == 0) "120 Hz" else "60 Hz"
                 } else "UNAVAILABLE"
 
-                val psiVal = if (deviceState.memoryPsiAvg10.state == TelemetryState.AVAILABLE) "%.2f".format(deviceState.memoryPsiAvg10.value ?: 0f) else "N/A"
+                val psiVal = if (deviceState.memoryPsiAvg10.state == TelemetryState.AVAILABLE && deviceState.memoryPsiAvg10.value != null) "%.2f".format(deviceState.memoryPsiAvg10.value) else "N/A"
                 val memAvail = if (deviceState.memoryAvailableMb.state == TelemetryState.AVAILABLE) "${deviceState.memoryAvailableMb.value} MB" else "N/A"
 
                 Row(
@@ -161,7 +194,7 @@ fun DashboardScreen(
                         modifier = Modifier.weight(1f),
                         title = "Refresh Rate",
                         value = refVal,
-                        subtitle = "Mode: ${refMode ?: "N/A"}"
+                        subtitle = "Mode: ${refMode ?: "N/A"} | Effective: ${deviceState.effectiveRefreshRateHz.value?.let { "%.1f Hz".format(it) } ?: "N/A"}"
                     )
                     TelemetryCard(
                         modifier = Modifier.weight(1f),

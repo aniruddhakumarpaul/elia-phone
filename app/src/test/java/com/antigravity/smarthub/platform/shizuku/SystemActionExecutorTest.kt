@@ -63,52 +63,52 @@ class SystemActionExecutorTest {
     @Test
     fun testFailedStandbyBucketVerificationTriggersRollback() {
         // Baseline = 10 (active), Target = rare, Readback returns 10 (Verification Failed)
-        `when`(mockUserService.readStandbyBucket("com.example.app")).thenReturn(10, 10, 10)
-        `when`(mockUserService.setStandbyBucket("com.example.app", "rare")).thenReturn(0)
-        `when`(mockUserService.setStandbyBucket("com.example.app", "active")).thenReturn(0)
+        `when`(mockUserService.readStandbyBucket("com.google.android.youtube")).thenReturn(10, 10, 10)
+        `when`(mockUserService.setStandbyBucket("com.google.android.youtube", "rare")).thenReturn(0)
+        `when`(mockUserService.setStandbyBucket("com.google.android.youtube", "active")).thenReturn(0)
 
         val executor = SystemActionExecutor(mockUserService, safetyGovernor, baselineRepository)
-        val action = SystemAction.SetStandbyBucket("com.example.app", "rare")
+        val action = SystemAction.SetStandbyBucket("com.google.android.youtube", "rare")
         val result = executor.executeTransaction(action, DeviceState())
 
         assertFalse(result.success)
         assertTrue(result.rolledBack)
         assertTrue(result.errorMessage!!.contains("verification failed", ignoreCase = true))
-        verify(mockUserService).setStandbyBucket("com.example.app", "active")
+        verify(mockUserService).setStandbyBucket("com.google.android.youtube", "active")
     }
 
     @Test
     fun testExemptedStandbyBucketRollback() {
         // Baseline = 5 (exempted), Target = rare, Readback returns 10 (Verification Failed) -> Rollback to exempted (5)
-        `when`(mockUserService.readStandbyBucket("com.example.app")).thenReturn(5, 10, 5)
-        `when`(mockUserService.setStandbyBucket("com.example.app", "rare")).thenReturn(0)
-        `when`(mockUserService.setStandbyBucket("com.example.app", "exempted")).thenReturn(0)
+        `when`(mockUserService.readStandbyBucket("com.google.android.youtube")).thenReturn(5, 10, 5)
+        `when`(mockUserService.setStandbyBucket("com.google.android.youtube", "rare")).thenReturn(0)
+        `when`(mockUserService.setStandbyBucket("com.google.android.youtube", "exempted")).thenReturn(0)
 
         val executor = SystemActionExecutor(mockUserService, safetyGovernor, baselineRepository)
-        val action = SystemAction.SetStandbyBucket("com.example.app", "rare")
+        val action = SystemAction.SetStandbyBucket("com.google.android.youtube", "rare")
         val result = executor.executeTransaction(action, DeviceState())
 
         assertFalse(result.success)
         assertTrue(result.rolledBack)
         assertEquals("exempted", result.baselineCaptured)
-        verify(mockUserService).setStandbyBucket("com.example.app", "exempted")
+        verify(mockUserService).setStandbyBucket("com.google.android.youtube", "exempted")
     }
 
     @Test
     fun testFailedAppOpsVerificationTriggersDefaultRollback() {
         // Baseline = "No operations." (default), Target = ignore, Readback returns "allow" -> Rollback to default
-        `when`(mockUserService.readAppOpsBackground("com.example.app")).thenReturn("No operations.", "allow", "No operations.")
-        `when`(mockUserService.setAppOpsBackground("com.example.app", "ignore")).thenReturn(0)
-        `when`(mockUserService.setAppOpsBackground("com.example.app", "default")).thenReturn(0)
+        `when`(mockUserService.readAppOpsBackground("com.google.android.youtube")).thenReturn("No operations.", "allow", "No operations.")
+        `when`(mockUserService.setAppOpsBackground("com.google.android.youtube", "ignore")).thenReturn(0)
+        `when`(mockUserService.setAppOpsBackground("com.google.android.youtube", "default")).thenReturn(0)
 
         val executor = SystemActionExecutor(mockUserService, safetyGovernor, baselineRepository)
-        val action = SystemAction.SetAppOpsBackground("com.example.app", allow = false)
+        val action = SystemAction.SetAppOpsBackground("com.google.android.youtube", allow = false)
         val result = executor.executeTransaction(action, DeviceState())
 
         assertFalse(result.success)
         assertTrue(result.rolledBack)
         assertEquals("default", result.baselineCaptured)
-        verify(mockUserService).setAppOpsBackground("com.example.app", "default")
+        verify(mockUserService).setAppOpsBackground("com.google.android.youtube", "default")
     }
 
     @Test
@@ -147,7 +147,10 @@ class SystemActionExecutorTest {
         `when`(newMockService.setRefreshRateMode(0)).thenReturn(0)
         currentService = newMockService
 
-        val secondResult = executor.executeTransaction(SystemAction.SetRefreshRate(0), DeviceState())
+        val secondResult = executor.executeTransaction(
+            SystemAction.SetRefreshRate(0),
+            DeviceState(thermalStatus = TelemetryValue(ThermalStatusLevel.NOMINAL, TelemetryState.AVAILABLE))
+        )
         assertTrue(secondResult.success)
         verify(newMockService).setRefreshRateMode(0)
     }
@@ -163,5 +166,57 @@ class SystemActionExecutorTest {
         val result = executor.executeTransaction(action, criticalState)
         assertFalse(result.success)
         assertTrue(result.errorMessage!!.contains("VETOED"))
+    }
+
+    @Test
+    fun testInvalidRefreshBaselinePreventsMutation() {
+        `when`(mockUserService.readSetting("secure", "refresh_rate_mode")).thenReturn("not-a-mode")
+        val executor = SystemActionExecutor(mockUserService, safetyGovernor, baselineRepository)
+
+        val result = executor.executeTransaction(SystemAction.SetRefreshRate(1), DeviceState())
+
+        assertFalse(result.success)
+        assertTrue(result.errorMessage!!.contains("Invalid refresh baseline"))
+        verify(mockUserService, org.mockito.Mockito.never()).setRefreshRateMode(anyInt())
+    }
+
+    @Test
+    fun testSettingAcceptedButEffectiveRefreshDisagrees() {
+        `when`(mockUserService.readSetting("secure", "refresh_rate_mode")).thenReturn("1", "0", "1")
+        `when`(mockUserService.setRefreshRateMode(anyInt())).thenReturn(0)
+        val executor = SystemActionExecutor(
+            mockUserService,
+            safetyGovernor,
+            baselineRepository,
+            effectiveRefreshRateReader = { 60.0f },
+            stabilizationDelayMs = 0L
+        )
+
+        val result = executor.executeTransaction(
+            SystemAction.SetRefreshRate(0),
+            DeviceState(thermalStatus = TelemetryValue(ThermalStatusLevel.NOMINAL, TelemetryState.AVAILABLE))
+        )
+
+        assertFalse(result.success)
+        assertEquals(com.antigravity.smarthub.core.model.CapabilityResult.PARTIALLY_SUPPORTED, result.capabilityResult)
+        assertTrue(result.errorMessage!!.contains("effective display"))
+        assertTrue(result.rolledBack)
+    }
+
+    @Test
+    fun testRestoreOriginalRefreshBaselineExactly() {
+        `when`(mockUserService.readSetting("secure", "refresh_rate_mode")).thenReturn("0", "1", "0")
+        `when`(mockUserService.setRefreshRateMode(anyInt())).thenReturn(0)
+        val executor = SystemActionExecutor(mockUserService, safetyGovernor, baselineRepository)
+
+        assertTrue(executor.executeTransaction(SystemAction.SetRefreshRate(1), DeviceState()).success)
+        val restored = executor.restoreOriginal(
+            "REFRESH_RATE",
+            DeviceState(thermalStatus = TelemetryValue(ThermalStatusLevel.NOMINAL, TelemetryState.AVAILABLE))
+        )
+
+        assertTrue(restored.success)
+        assertEquals("0", restored.requestedValue)
+        verify(mockUserService).setRefreshRateMode(0)
     }
 }

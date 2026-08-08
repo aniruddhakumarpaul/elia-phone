@@ -27,21 +27,21 @@ class ProfileResolver {
         return when (profile) {
             SmartHubProfile.P0_THERMAL_EMERGENCY -> ResolvedState(
                 activeProfile = profile,
-                rationale = "Thermal status elevated (${base.thermalStatus.value ?: "UNKNOWN"}). Cooling override active.",
+                rationale = "Thermal status elevated (${base.thermalStatus.value?.name ?: "UNAVAILABLE"}). Cooling override active.",
                 recommendedActions = listOf(
                     SystemAction.SetRefreshRate(targetMode = 1) // Force 60Hz to reduce GPU/display power
                 )
             )
             SmartHubProfile.P1_CRITICAL_BATTERY -> ResolvedState(
                 activeProfile = profile,
-                rationale = "Battery level at ${base.batteryPercent.value ?: 0}%. Energy saver active.",
+                rationale = "Battery level at ${base.batteryPercent.value?.let { "$it%" } ?: "UNAVAILABLE"}. Energy saver active.",
                 recommendedActions = listOf(
                     SystemAction.SetRefreshRate(targetMode = 1) // Force 60Hz
                 )
             )
             SmartHubProfile.P2_CHARGING_THERMAL_GUARD -> ResolvedState(
                 activeProfile = profile,
-                rationale = "Device charging with elevated temperature (${base.batteryTempC.value ?: 0f}°C). Thermal guard active.",
+                rationale = "Device charging with elevated temperature (${base.batteryTempC.value?.let { "$it°C" } ?: "UNAVAILABLE"}). Thermal guard active.",
                 recommendedActions = listOf(
                     SystemAction.SetRefreshRate(targetMode = 1)
                 )

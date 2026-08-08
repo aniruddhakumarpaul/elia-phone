@@ -70,10 +70,10 @@ class MainActivityStateMappingTest {
             ),
             display = TelemetryValue(
                 DisplayMetrics(
-                    secureSettingMode = 0,
-                    physicalRefreshRateHz = 120.0f,
-                    isScreenOn = true,
-                    displayStateStr = "ON"
+                    secureSettingMode = TelemetryValue.available(0),
+                    physicalRefreshRateHz = TelemetryValue.available(120.0f),
+                    isScreenOn = TelemetryValue.available(true),
+                    displayStateStr = TelemetryValue.available("ON")
                 ),
                 TelemetryState.AVAILABLE
             ),

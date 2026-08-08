@@ -30,6 +30,12 @@ class SafetyGovernorTest {
     }
 
     @Test
+    fun testVetoesRefreshRateBoostWhenThermalIsUnavailable() {
+        val result = governor.evaluateAction(SystemAction.SetRefreshRate(0), DeviceState())
+        assertFalse(result.isAllowed)
+    }
+
+    @Test
     fun testVetoesRestrictingProtectedPackageTeams() {
         val normalState = DeviceState()
         val restrictAction = SystemAction.SetStandbyBucket("com.microsoft.teams", "restricted")
