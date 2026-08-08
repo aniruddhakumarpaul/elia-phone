@@ -3,7 +3,11 @@ package com.antigravity.smarthub.di
 import android.content.Context
 import android.os.PowerManager
 import com.antigravity.smarthub.core.persistence.BaselineRepository
+import com.antigravity.smarthub.core.safety.AppClassifier
 import com.antigravity.smarthub.core.safety.SafetyGovernor
+import com.antigravity.smarthub.core.state.ActionLedger
+import com.antigravity.smarthub.core.state.OptimizationController
+import com.antigravity.smarthub.core.state.ProfileResolver
 import com.antigravity.smarthub.core.state.StateMachineEngine
 import com.antigravity.smarthub.core.telemetry.*
 import com.antigravity.smarthub.platform.shizuku.ShizukuServiceConnection
@@ -13,7 +17,6 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
-import java.io.File
 import java.util.concurrent.Executors
 import javax.inject.Singleton
 
@@ -30,7 +33,11 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideSafetyGovernor(): SafetyGovernor = SafetyGovernor()
+    fun provideAppClassifier(): AppClassifier = AppClassifier()
+
+    @Provides
+    @Singleton
+    fun provideSafetyGovernor(appClassifier: AppClassifier): SafetyGovernor = SafetyGovernor(appClassifier)
 
     @Provides
     @Singleton
@@ -38,11 +45,15 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideProfileResolver(): ProfileResolver = ProfileResolver()
+
+    @Provides
+    @Singleton
     fun provideShizukuServiceConnection(): ShizukuServiceConnection = ShizukuServiceConnection()
 
     @Provides
     @Singleton
-    fun provideProfileResolver(): com.antigravity.smarthub.core.state.ProfileResolver = com.antigravity.smarthub.core.state.ProfileResolver()
+    fun provideActionLedger(): ActionLedger = ActionLedger()
 
     @Provides
     @Singleton
@@ -80,6 +91,28 @@ object AppModule {
             appContextObserver = appContextObserver,
             mediaContextObserver = mediaObserver,
             navigationObserver = navObserver
+        )
+    }
+
+    @Provides
+    @Singleton
+    fun provideOptimizationController(
+        telemetryAggregator: TelemetryAggregator,
+        stateMachineEngine: StateMachineEngine,
+        profileResolver: ProfileResolver,
+        safetyGovernor: SafetyGovernor,
+        systemActionExecutor: SystemActionExecutor,
+        shizukuConnection: ShizukuServiceConnection,
+        actionLedger: ActionLedger
+    ): OptimizationController {
+        return OptimizationController(
+            telemetryAggregator = telemetryAggregator,
+            stateMachineEngine = stateMachineEngine,
+            profileResolver = profileResolver,
+            safetyGovernor = safetyGovernor,
+            actionExecutor = systemActionExecutor,
+            shizukuConnection = shizukuConnection,
+            actionLedger = actionLedger
         )
     }
 }

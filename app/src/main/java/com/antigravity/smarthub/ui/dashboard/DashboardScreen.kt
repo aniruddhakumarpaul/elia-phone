@@ -10,17 +10,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.antigravity.smarthub.core.model.ActionHistoryRecord
 import com.antigravity.smarthub.core.model.DeviceState
 import com.antigravity.smarthub.core.model.PrivilegeTier
 import com.antigravity.smarthub.core.state.ResolvedState
-import com.antigravity.smarthub.core.telemetry.DeviceTelemetrySnapshot
+import com.antigravity.smarthub.core.telemetry.TelemetryState
+import com.antigravity.smarthub.platform.shizuku.ShizukuState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
     deviceState: DeviceState,
     resolvedState: ResolvedState,
-    telemetrySnapshot: DeviceTelemetrySnapshot? = null,
+    historyLog: List<ActionHistoryRecord> = emptyList(),
+    shizukuState: ShizukuState = ShizukuState.DISCONNECTED,
     onRefresh: () -> Unit = {}
 ) {
     Scaffold(
@@ -37,14 +40,14 @@ fun DashboardScreen(
                             fontSize = 20.sp
                         )
                         Badge(
-                            containerColor = if (deviceState.privilegeTier == PrivilegeTier.TIER_1_SHIZUKU) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.secondaryContainer
+                            containerColor = when (shizukuState) {
+                                ShizukuState.CONNECTED -> MaterialTheme.colorScheme.primary
+                                ShizukuState.CONNECTING -> MaterialTheme.colorScheme.tertiary
+                                else -> MaterialTheme.colorScheme.secondaryContainer
                             }
                         ) {
                             Text(
-                                text = if (deviceState.privilegeTier == PrivilegeTier.TIER_1_SHIZUKU) "SHIZUKU" else "STOCK",
+                                text = shizukuState.name,
                                 fontSize = 10.sp,
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                             )
@@ -113,6 +116,14 @@ fun DashboardScreen(
 
             // Row 1: Battery & Thermal
             item {
+                val bVal = if (deviceState.batteryPercent.state == TelemetryState.AVAILABLE) "${deviceState.batteryPercent.value}%" else "UNAVAILABLE"
+                val isChg = deviceState.isCharging.value ?: false
+                val bTemp = if (deviceState.batteryTempC.state == TelemetryState.AVAILABLE) "${deviceState.batteryTempC.value}°C" else "N/A"
+                val bSub = if (isChg) "Charging ($bTemp)" else "Discharging ($bTemp)"
+
+                val tVal = if (deviceState.thermalStatus.state == TelemetryState.AVAILABLE) deviceState.thermalStatus.value?.name ?: "UNKNOWN" else "UNAVAILABLE"
+                val apTemp = if (deviceState.apTempC.state == TelemetryState.AVAILABLE) "${deviceState.apTempC.value}°C" else "N/A"
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -120,20 +131,28 @@ fun DashboardScreen(
                     TelemetryCard(
                         modifier = Modifier.weight(1f),
                         title = "Battery",
-                        value = "${deviceState.batteryPercent}%",
-                        subtitle = if (deviceState.isCharging) "Charging (${deviceState.batteryTempC}°C)" else "Discharging (${deviceState.batteryTempC}°C)"
+                        value = bVal,
+                        subtitle = bSub
                     )
                     TelemetryCard(
                         modifier = Modifier.weight(1f),
                         title = "Thermal Status",
-                        value = deviceState.thermalStatus.name,
-                        subtitle = "AP Temp: ${deviceState.apTempC}°C"
+                        value = tVal,
+                        subtitle = "AP Temp: $apTemp"
                     )
                 }
             }
 
             // Row 2: Refresh Rate & Memory PSI
             item {
+                val refMode = deviceState.activeRefreshRateMode.value
+                val refVal = if (deviceState.activeRefreshRateMode.state == TelemetryState.AVAILABLE) {
+                    if (refMode == 0) "120 Hz" else "60 Hz"
+                } else "UNAVAILABLE"
+
+                val psiVal = if (deviceState.memoryPsiAvg10.state == TelemetryState.AVAILABLE) "%.2f".format(deviceState.memoryPsiAvg10.value ?: 0f) else "N/A"
+                val memAvail = if (deviceState.memoryAvailableMb.state == TelemetryState.AVAILABLE) "${deviceState.memoryAvailableMb.value} MB" else "N/A"
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -141,29 +160,22 @@ fun DashboardScreen(
                     TelemetryCard(
                         modifier = Modifier.weight(1f),
                         title = "Refresh Rate",
-                        value = if (deviceState.activeRefreshRateMode == 0) "120 Hz" else "60 Hz",
-                        subtitle = "Mode: ${deviceState.activeRefreshRateMode}"
+                        value = refVal,
+                        subtitle = "Mode: ${refMode ?: "N/A"}"
                     )
                     TelemetryCard(
                         modifier = Modifier.weight(1f),
                         title = "Memory PSI",
-                        value = "%.2f".format(deviceState.memoryPsiAvg10),
-                        subtitle = "${deviceState.memoryAvailableMb} MB Avail"
+                        value = psiVal,
+                        subtitle = "$memAvail Avail"
                     )
                 }
             }
 
-            // Row 3: CPU & Foreground Package
+            // Row 3: Foreground Package
             item {
-                val fgDisplay = if (deviceState.foregroundPackage.isNotBlank()) {
-                    deviceState.foregroundPackage.substringAfterLast('.')
-                } else {
-                    "None"
-                }
-
-                val cpuCores = telemetrySnapshot?.cpuMetrics?.value
-                val onlineCores = cpuCores?.count { it.isOnline } ?: 8
-                val totalCores = cpuCores?.size ?: 8
+                val fgPkg = deviceState.foregroundPackage.value ?: ""
+                val fgDisplay = if (fgPkg.isNotBlank()) fgPkg.substringAfterLast('.') else "Background"
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -171,15 +183,15 @@ fun DashboardScreen(
                 ) {
                     TelemetryCard(
                         modifier = Modifier.weight(1f),
-                        title = "CPU Cores",
-                        value = "$onlineCores / $totalCores Online",
-                        subtitle = "Exynos 1280 (6+2)"
+                        title = "Foreground App",
+                        value = fgDisplay,
+                        subtitle = if (fgPkg.isNotBlank()) fgPkg else "None"
                     )
                     TelemetryCard(
                         modifier = Modifier.weight(1f),
-                        title = "Foreground App",
-                        value = fgDisplay,
-                        subtitle = if (deviceState.foregroundPackage.isNotBlank()) deviceState.foregroundPackage else "Background"
+                        title = "Privilege Tier",
+                        value = deviceState.privilegeTier.name,
+                        subtitle = "Shizuku Service"
                     )
                 }
             }
@@ -187,7 +199,7 @@ fun DashboardScreen(
             // 3. Recommended Actions
             item {
                 Text(
-                    text = "Applied / Recommended Actions",
+                    text = "Recommended Profile Actions",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -245,6 +257,77 @@ fun DashboardScreen(
                                     text = action.requiredTier.name,
                                     fontSize = 10.sp,
                                     modifier = Modifier.padding(4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4. Action History Log (Explainability)
+            item {
+                Text(
+                    text = "Action History & Audit Log",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            if (historyLog.isEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Text(
+                            text = "No system action history logged yet",
+                            modifier = Modifier.padding(16.dp),
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            } else {
+                items(historyLog.size) { index ->
+                    val record = historyLog[index]
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = record.actionId,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                                Text(
+                                    text = record.capabilityResult.name,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (record.capabilityResult.name == "SUPPORTED") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Profile: ${record.newProfile.name} | Rationale: ${record.triggeringTelemetrySummary}",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (!record.safetyVetoResult.isAllowed) {
+                                Text(
+                                    text = "VETO: ${record.safetyVetoResult.vetoReason}",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.error
                                 )
                             }
                         }

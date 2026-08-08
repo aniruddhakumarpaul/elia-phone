@@ -1,5 +1,8 @@
 package com.antigravity.smarthub.core.model
 
+import com.antigravity.smarthub.core.telemetry.TelemetryState
+import com.antigravity.smarthub.core.telemetry.TelemetryValue
+
 /**
  * Normalized Thermal Status from PowerManager HAL 2.0 & Battery sensors.
  */
@@ -21,7 +24,7 @@ enum class PrivilegeTier {
 }
 
 /**
- * High-Level Operating Profiles determined by ProfileResolver.
+ * Single Canonical Profile Authority determined by StateMachineEngine.
  */
 enum class SmartHubProfile(val priority: Int, val displayName: String) {
     P0_THERMAL_EMERGENCY(0, "Thermal Emergency Override"),
@@ -34,19 +37,30 @@ enum class SmartHubProfile(val priority: Int, val displayName: String) {
 }
 
 /**
- * Real-time aggregated Device Telemetry State.
+ * Hardware capability result after executing/verifying action.
+ */
+enum class CapabilityResult {
+    SUPPORTED,
+    PARTIALLY_SUPPORTED,
+    IGNORED_BY_OEM,
+    UNAVAILABLE
+}
+
+/**
+ * Real-time quality-aware Device Telemetry State.
+ * Every safety-relevant metric retains explicit TelemetryValue<T> state.
  */
 data class DeviceState(
-    val batteryPercent: Int = 100,
-    val isCharging: Boolean = false,
-    val batteryTempC: Float = 30.0f,
-    val apTempC: Float = 35.0f,
-    val thermalStatus: ThermalStatusLevel = ThermalStatusLevel.NOMINAL,
-    val memoryAvailableMb: Long = 3000,
-    val memoryPsiAvg10: Float = 0.0f,
-    val isScreenOn: Boolean = true,
-    val foregroundPackage: String = "",
-    val activeRefreshRateMode: Int = 0, // 0 = 120Hz, 1 = 60Hz on Samsung One UI
+    val batteryPercent: TelemetryValue<Int> = TelemetryValue.unavailable(),
+    val isCharging: TelemetryValue<Boolean> = TelemetryValue.unavailable(),
+    val batteryTempC: TelemetryValue<Float> = TelemetryValue.unavailable(),
+    val apTempC: TelemetryValue<Float> = TelemetryValue.unavailable(),
+    val thermalStatus: TelemetryValue<ThermalStatusLevel> = TelemetryValue.unavailable(),
+    val memoryAvailableMb: TelemetryValue<Long> = TelemetryValue.unavailable(),
+    val memoryPsiAvg10: TelemetryValue<Float> = TelemetryValue.unavailable(),
+    val isScreenOn: TelemetryValue<Boolean> = TelemetryValue.unavailable(),
+    val foregroundPackage: TelemetryValue<String> = TelemetryValue.unavailable(),
+    val activeRefreshRateMode: TelemetryValue<Int> = TelemetryValue.unavailable(),
     val privilegeTier: PrivilegeTier = PrivilegeTier.TIER_0_STOCK
 )
 
@@ -91,4 +105,22 @@ sealed interface SystemAction {
 data class SafetyVetoResult(
     val isAllowed: Boolean,
     val vetoReason: String = ""
+)
+
+/**
+ * Explainable Action History Record for UI inspection & audit trail.
+ */
+data class ActionHistoryRecord(
+    val timestampMs: Long = System.currentTimeMillis(),
+    val previousProfile: SmartHubProfile,
+    val newProfile: SmartHubProfile,
+    val triggeringTelemetrySummary: String,
+    val actionId: String,
+    val actionDescription: String,
+    val safetyVetoResult: SafetyVetoResult,
+    val capabilityResult: CapabilityResult,
+    val previousValue: String?,
+    val requestedValue: String?,
+    val verifiedValue: String?,
+    val rolledBack: Boolean = false
 )

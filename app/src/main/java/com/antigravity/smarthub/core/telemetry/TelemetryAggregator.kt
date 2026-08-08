@@ -53,6 +53,12 @@ class TelemetryAggregator(
         thermalObserver.stopObserving()
     }
 
+    fun refreshTelemetry(): DeviceTelemetrySnapshot {
+        val snapshot = sampleCurrentState()
+        _telemetryStream.value = snapshot
+        return snapshot
+    }
+
     fun sampleCurrentState(): DeviceTelemetrySnapshot {
         val cpuMetrics = cpuObserver.readCpuMetrics()
         val memTotal = memoryObserver.readMemTotalKb()

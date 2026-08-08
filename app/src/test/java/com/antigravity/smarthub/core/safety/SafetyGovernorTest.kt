@@ -3,6 +3,8 @@ package com.antigravity.smarthub.core.safety
 import com.antigravity.smarthub.core.model.DeviceState
 import com.antigravity.smarthub.core.model.SystemAction
 import com.antigravity.smarthub.core.model.ThermalStatusLevel
+import com.antigravity.smarthub.core.telemetry.TelemetryState
+import com.antigravity.smarthub.core.telemetry.TelemetryValue
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -20,7 +22,7 @@ class SafetyGovernorTest {
     @Test
     fun testVetoesRefreshRateBoostUnderThermalEmergency() {
         val criticalState = DeviceState(
-            thermalStatus = ThermalStatusLevel.CRITICAL
+            thermalStatus = TelemetryValue(ThermalStatusLevel.CRITICAL, TelemetryState.AVAILABLE)
         )
         val boostAction = SystemAction.SetRefreshRate(targetMode = 0) // 120Hz
         val result = governor.evaluateAction(boostAction, criticalState)

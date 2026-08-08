@@ -6,6 +6,8 @@ import com.antigravity.smarthub.core.model.SystemAction
 import com.antigravity.smarthub.core.model.ThermalStatusLevel
 import com.antigravity.smarthub.core.persistence.BaselineRepository
 import com.antigravity.smarthub.core.safety.SafetyGovernor
+import com.antigravity.smarthub.core.telemetry.TelemetryState
+import com.antigravity.smarthub.core.telemetry.TelemetryValue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -154,7 +156,9 @@ class SystemActionExecutorTest {
     fun testSafetyGovernorVetoFails() {
         val executor = SystemActionExecutor(mockUserService, safetyGovernor, baselineRepository)
         val action = SystemAction.SetRefreshRate(targetMode = 0)
-        val criticalState = DeviceState(thermalStatus = ThermalStatusLevel.CRITICAL)
+        val criticalState = DeviceState(
+            thermalStatus = TelemetryValue(ThermalStatusLevel.CRITICAL, TelemetryState.AVAILABLE)
+        )
 
         val result = executor.executeTransaction(action, criticalState)
         assertFalse(result.success)

@@ -1,6 +1,7 @@
 package com.antigravity.smarthub.platform.shizuku
 
 import com.antigravity.smarthub.ISmartHubUserService
+import com.antigravity.smarthub.core.model.CapabilityResult
 import com.antigravity.smarthub.core.model.DeviceState
 import com.antigravity.smarthub.core.model.SystemAction
 import com.antigravity.smarthub.core.persistence.BaselineRepository
@@ -10,6 +11,7 @@ data class ActionExecutionResult(
     val success: Boolean,
     val baselineCaptured: String?,
     val verifiedValue: String?,
+    val capabilityResult: CapabilityResult = CapabilityResult.UNAVAILABLE,
     val errorMessage: String? = null,
     val rolledBack: Boolean = false
 )
@@ -46,6 +48,7 @@ class SystemActionExecutor(
                 success = false,
                 baselineCaptured = null,
                 verifiedValue = null,
+                capabilityResult = CapabilityResult.UNAVAILABLE,
                 errorMessage = "VETOED by SafetyGovernor: ${vetoResult.vetoReason}",
                 rolledBack = false
             )
@@ -57,6 +60,7 @@ class SystemActionExecutor(
                 success = false,
                 baselineCaptured = null,
                 verifiedValue = null,
+                capabilityResult = CapabilityResult.UNAVAILABLE,
                 errorMessage = "Shizuku UserService unavailable",
                 rolledBack = false
             )
@@ -73,6 +77,7 @@ class SystemActionExecutor(
                 success = false,
                 baselineCaptured = null,
                 verifiedValue = null,
+                capabilityResult = CapabilityResult.UNAVAILABLE,
                 errorMessage = "IPC execution error: ${e.message}",
                 rolledBack = false
             )
@@ -82,14 +87,14 @@ class SystemActionExecutor(
     private fun executeRefreshRate(action: SystemAction.SetRefreshRate, userService: ISmartHubUserService): ActionExecutionResult {
         // Snapshot Baseline
         val baseline = userService.readSetting("secure", "refresh_rate_mode")
-            ?: return ActionExecutionResult(false, null, null, "Failed to read setting baseline", false)
+            ?: return ActionExecutionResult(false, null, null, CapabilityResult.UNAVAILABLE, "Failed to read setting baseline", false)
 
         baselineRepository.saveSettingBaselineOnce("secure", "refresh_rate_mode", baseline)
 
         // Execute Mutation
         val status = userService.setRefreshRateMode(action.targetMode)
         if (status != 0) {
-            return ActionExecutionResult(false, baseline, null, "IPC setRefreshRateMode failed with code $status", false)
+            return ActionExecutionResult(false, baseline, null, CapabilityResult.UNAVAILABLE, "IPC setRefreshRateMode failed with code $status", false)
         }
 
         // Readback Verification
@@ -103,12 +108,19 @@ class SystemActionExecutor(
                 success = false,
                 baselineCaptured = baseline,
                 verifiedValue = verified,
+                capabilityResult = CapabilityResult.IGNORED_BY_OEM,
                 errorMessage = "Refresh rate verification failed (expected ${action.targetMode}, got $verified). Rollback verified: $rollbackSuccess",
                 rolledBack = rollbackSuccess
             )
         }
 
-        return ActionExecutionResult(true, baseline, verified, rolledBack = false)
+        return ActionExecutionResult(
+            success = true,
+            baselineCaptured = baseline,
+            verifiedValue = verified,
+            capabilityResult = CapabilityResult.SUPPORTED,
+            rolledBack = false
+        )
     }
 
     private fun executeStandbyBucket(action: SystemAction.SetStandbyBucket, userService: ISmartHubUserService): ActionExecutionResult {
@@ -117,11 +129,11 @@ class SystemActionExecutor(
         // Snapshot Baseline
         val baselineCode = userService.readStandbyBucket(action.packageName)
         if (baselineCode == -1) {
-            return ActionExecutionResult(false, null, null, "Failed to read standby bucket baseline for ${action.packageName}", false)
+            return ActionExecutionResult(false, null, null, CapabilityResult.UNAVAILABLE, "Failed to read standby bucket baseline for ${action.packageName}", false)
         }
         val baselineBucket = bucketCodeToString(baselineCode)
         if (!validBuckets.contains(baselineBucket)) {
-            return ActionExecutionResult(false, baselineBucket, null, "Unsafe: Captured standby bucket '$baselineBucket' cannot be safely restored for ${action.packageName}", false)
+            return ActionExecutionResult(false, baselineBucket, null, CapabilityResult.UNAVAILABLE, "Unsafe: Captured standby bucket '$baselineBucket' cannot be safely restored for ${action.packageName}", false)
         }
 
         baselineRepository.saveStandbyBucketBaselineOnce(action.packageName, baselineBucket)
@@ -129,7 +141,7 @@ class SystemActionExecutor(
         // Execute Mutation
         val status = userService.setStandbyBucket(action.packageName, action.targetBucket)
         if (status != 0) {
-            return ActionExecutionResult(false, baselineBucket, null, "IPC setStandbyBucket failed with code $status", false)
+            return ActionExecutionResult(false, baselineBucket, null, CapabilityResult.UNAVAILABLE, "IPC setStandbyBucket failed with code $status", false)
         }
 
         // Readback Verification
@@ -145,12 +157,19 @@ class SystemActionExecutor(
                 success = false,
                 baselineCaptured = baselineBucket,
                 verifiedValue = readbackBucket,
+                capabilityResult = CapabilityResult.PARTIALLY_SUPPORTED,
                 errorMessage = "Standby bucket verification failed (expected ${action.targetBucket}, got $readbackBucket). Rollback verified: $rollbackSuccess",
                 rolledBack = rollbackSuccess
             )
         }
 
-        return ActionExecutionResult(true, baselineBucket, readbackBucket, rolledBack = false)
+        return ActionExecutionResult(
+            success = true,
+            baselineCaptured = baselineBucket,
+            verifiedValue = readbackBucket,
+            capabilityResult = CapabilityResult.SUPPORTED,
+            rolledBack = false
+        )
     }
 
     private fun executeAppOpsBackground(action: SystemAction.SetAppOpsBackground, userService: ISmartHubUserService): ActionExecutionResult {
@@ -158,11 +177,11 @@ class SystemActionExecutor(
 
         // Snapshot Baseline
         val rawBaselineOps = userService.readAppOpsBackground(action.packageName)
-            ?: return ActionExecutionResult(false, null, null, "Failed to read AppOps baseline for ${action.packageName}", false)
+            ?: return ActionExecutionResult(false, null, null, CapabilityResult.UNAVAILABLE, "Failed to read AppOps baseline for ${action.packageName}", false)
 
         val baselineMode = parseExactAppOpsMode(rawBaselineOps)
         if (!validModes.contains(baselineMode)) {
-            return ActionExecutionResult(false, baselineMode, null, "Unsafe: Captured AppOps mode '$baselineMode' cannot be safely restored for ${action.packageName}", false)
+            return ActionExecutionResult(false, baselineMode, null, CapabilityResult.UNAVAILABLE, "Unsafe: Captured AppOps mode '$baselineMode' cannot be safely restored for ${action.packageName}", false)
         }
 
         baselineRepository.saveAppOpsBaselineOnce(action.packageName, baselineMode)
@@ -171,7 +190,7 @@ class SystemActionExecutor(
         val targetMode = if (action.allow) "allow" else "ignore"
         val status = userService.setAppOpsBackground(action.packageName, targetMode)
         if (status != 0) {
-            return ActionExecutionResult(false, baselineMode, null, "IPC setAppOpsBackground failed with code $status", false)
+            return ActionExecutionResult(false, baselineMode, null, CapabilityResult.UNAVAILABLE, "IPC setAppOpsBackground failed with code $status", false)
         }
 
         // Readback Verification
@@ -189,12 +208,19 @@ class SystemActionExecutor(
                 success = false,
                 baselineCaptured = baselineMode,
                 verifiedValue = actualReadbackMode,
+                capabilityResult = CapabilityResult.PARTIALLY_SUPPORTED,
                 errorMessage = "AppOps verification failed (expected $targetMode, got $actualReadbackMode). Rollback verified: $rollbackSuccess",
                 rolledBack = rollbackSuccess
             )
         }
 
-        return ActionExecutionResult(true, baselineMode, targetMode, rolledBack = false)
+        return ActionExecutionResult(
+            success = true,
+            baselineCaptured = baselineMode,
+            verifiedValue = targetMode,
+            capabilityResult = CapabilityResult.SUPPORTED,
+            rolledBack = false
+        )
     }
 
     fun bucketCodeToString(code: Int): String {

@@ -4,64 +4,51 @@ import com.antigravity.smarthub.core.model.DeviceState
 import com.antigravity.smarthub.core.model.SafetyVetoResult
 import com.antigravity.smarthub.core.model.SystemAction
 import com.antigravity.smarthub.core.model.ThermalStatusLevel
+import com.antigravity.smarthub.core.telemetry.TelemetryState
 
 /**
  * Safety Governor - Central authority for approving or vetoing any system action.
  */
-class SafetyGovernor {
-
-    private val protectedPackageBlacklist = setOf(
-        "com.sec.android.app.launcher",
-        "com.android.systemui",
-        "com.android.phone",
-        "com.samsung.android.incallui",
-        "com.google.android.dialer",
-        "com.samsung.android.dialer",
-        "com.sec.android.app.clockpackage",
-        "com.whatsapp",
-        "org.telegram.messenger",
-        "com.microsoft.teams",
-        "com.microsoft.office.outlook",
-        "net.one97.paytm",
-        "com.phonepe.app",
-        "com.axis.mobile",
-        "in.hsbc.hsbcindia",
-        "in.gov.uidai.facerd",
-        "com.digilocker.android",
-        "com.antigravity.smarthub"
-    )
+class SafetyGovernor(
+    private val appClassifier: AppClassifier = AppClassifier()
+) {
 
     /**
      * Evaluates whether a proposed SystemAction is safe to execute under current DeviceState.
      */
     fun evaluateAction(action: SystemAction, state: DeviceState): SafetyVetoResult {
-        // Rule 1: Thermal Emergency absolute veto on performance actions
-        if (state.thermalStatus == ThermalStatusLevel.CRITICAL || state.thermalStatus == ThermalStatusLevel.SEVERE) {
+        // Rule 1: Thermal Emergency absolute veto on performance actions (120Hz boost)
+        val isThermalElevated = (state.thermalStatus.state == TelemetryState.AVAILABLE &&
+                (state.thermalStatus.value == ThermalStatusLevel.CRITICAL || state.thermalStatus.value == ThermalStatusLevel.SEVERE)) ||
+                (state.apTempC.state == TelemetryState.AVAILABLE && (state.apTempC.value ?: 0f) >= 48.0f) ||
+                (state.batteryTempC.state == TelemetryState.AVAILABLE && (state.batteryTempC.value ?: 0f) >= 43.0f)
+
+        if (isThermalElevated) {
             if (action is SystemAction.SetRefreshRate && action.targetMode == 0) {
                 return SafetyVetoResult(
                     isAllowed = false,
-                    vetoReason = "Thermal Status is ${state.thermalStatus}. 120Hz boost vetoed."
+                    vetoReason = "Thermal elevated (Status: ${state.thermalStatus.value}, AP: ${state.apTempC.value}°C). 120Hz boost vetoed."
                 )
             }
         }
 
-        // Rule 2: Never allow restricting protected apps in blacklist
+        // Rule 2: Never allow restricting protected apps under AppClassifier
         when (action) {
             is SystemAction.SetStandbyBucket -> {
-                if (protectedPackageBlacklist.contains(action.packageName) &&
-                    (action.targetBucket == "restricted" || action.targetBucket == "rare")
+                if (appClassifier.isProtected(action.packageName) &&
+                    (action.targetBucket == "restricted" || action.targetBucket == "rare" || action.targetBucket == "frequent")
                 ) {
                     return SafetyVetoResult(
                         isAllowed = false,
-                        vetoReason = "Package ${action.packageName} is protected under NEVER_TOUCH policy."
+                        vetoReason = "Package ${action.packageName} is protected under AppClassifier policy (${appClassifier.classifyApp(action.packageName)})."
                     )
                 }
             }
             is SystemAction.SetAppOpsBackground -> {
-                if (protectedPackageBlacklist.contains(action.packageName) && !action.allow) {
+                if (appClassifier.isProtected(action.packageName) && !action.allow) {
                     return SafetyVetoResult(
                         isAllowed = false,
-                        vetoReason = "Package ${action.packageName} background execution is protected under NEVER_TOUCH policy."
+                        vetoReason = "Package ${action.packageName} background execution is protected under AppClassifier policy."
                     )
                 }
             }
@@ -72,6 +59,6 @@ class SafetyGovernor {
     }
 
     fun isProtectedPackage(packageName: String): Boolean {
-        return protectedPackageBlacklist.contains(packageName)
+        return appClassifier.isProtected(packageName)
     }
 }

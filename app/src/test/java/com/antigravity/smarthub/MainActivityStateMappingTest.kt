@@ -2,12 +2,41 @@ package com.antigravity.smarthub
 
 import com.antigravity.smarthub.core.model.PrivilegeTier
 import com.antigravity.smarthub.core.model.ThermalStatusLevel
+import com.antigravity.smarthub.core.persistence.BaselineRepository
+import com.antigravity.smarthub.core.safety.SafetyGovernor
+import com.antigravity.smarthub.core.state.OptimizationController
+import com.antigravity.smarthub.core.state.ProfileResolver
+import com.antigravity.smarthub.core.state.StateMachineEngine
 import com.antigravity.smarthub.core.telemetry.*
+import com.antigravity.smarthub.platform.shizuku.ShizukuServiceConnection
+import com.antigravity.smarthub.platform.shizuku.SystemActionExecutor
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
+import org.junit.Before
 import org.junit.Test
+import java.io.File
 
 class MainActivityStateMappingTest {
+
+    private lateinit var controller: OptimizationController
+
+    @Before
+    fun setUp() {
+        val connection = ShizukuServiceConnection()
+        val tempDir = File(System.getProperty("java.io.tmpdir"), "smarthub_test_${System.currentTimeMillis()}")
+        val repo = BaselineRepository(tempDir)
+        val safety = SafetyGovernor()
+        val executor = SystemActionExecutor(connection, safety, repo)
+        val aggregator = TelemetryAggregator()
+
+        controller = OptimizationController(
+            telemetryAggregator = aggregator,
+            stateMachineEngine = StateMachineEngine(),
+            profileResolver = ProfileResolver(),
+            safetyGovernor = safety,
+            actionExecutor = executor,
+            shizukuConnection = connection
+        )
+    }
 
     @Test
     fun testAuthenticSnapshotMapping() {
@@ -51,52 +80,18 @@ class MainActivityStateMappingTest {
             foregroundPackage = TelemetryValue("com.google.android.youtube", TelemetryState.AVAILABLE)
         )
 
-        val deviceState = MainActivity.snapshotToDeviceState(snapshot, isShizukuConnected = true)
+        val extState = controller.snapshotToExtendedDeviceState(snapshot)
+        val dState = extState.baseState
 
-        assertEquals(85, deviceState.batteryPercent)
-        assertEquals(true, deviceState.isCharging)
-        assertEquals(31.5f, deviceState.batteryTempC, 0.01f)
-        assertEquals(38.2f, deviceState.apTempC, 0.01f)
-        assertEquals(ThermalStatusLevel.MODERATE, deviceState.thermalStatus)
-        assertEquals(2000L, deviceState.memoryAvailableMb)
-        assertEquals(0.12f, deviceState.memoryPsiAvg10, 0.01f)
-        assertEquals(0, deviceState.activeRefreshRateMode)
-        assertEquals("com.google.android.youtube", deviceState.foregroundPackage)
-        assertEquals(PrivilegeTier.TIER_1_SHIZUKU, deviceState.privilegeTier)
-    }
-
-    @Test
-    fun testFallbackApTempUsesBatteryTempWithoutFabrication() {
-        val snapshot = DeviceTelemetrySnapshot(
-            battery = TelemetryValue(
-                BatteryMetrics(
-                    percent = 50,
-                    tempC = 29.0f,
-                    voltageMv = 3800,
-                    currentNowMa = -300,
-                    currentAvgMa = -300,
-                    isCharging = false,
-                    plugType = null
-                ),
-                TelemetryState.AVAILABLE
-            ),
-            measuredApTempC = TelemetryValue.unavailable()
-        )
-
-        val state = MainActivity.snapshotToDeviceState(snapshot, isShizukuConnected = false)
-        assertEquals(29.0f, state.apTempC, 0.01f)
-        assertNotEquals(32.0f, state.apTempC, 0.01f)
-        assertEquals(PrivilegeTier.TIER_0_STOCK, state.privilegeTier)
-    }
-
-    @Test
-    fun testUnavailableForegroundPackageIsEmpty() {
-        val snapshot = DeviceTelemetrySnapshot(
-            foregroundPackage = TelemetryValue.unavailable()
-        )
-
-        val state = MainActivity.snapshotToDeviceState(snapshot, isShizukuConnected = false)
-        assertEquals("", state.foregroundPackage)
-        assertNotEquals("com.sec.android.app.launcher", state.foregroundPackage)
+        assertEquals(85, dState.batteryPercent.value)
+        assertEquals(true, dState.isCharging.value)
+        assertEquals(31.5f, dState.batteryTempC.value ?: 0f, 0.01f)
+        assertEquals(38.2f, dState.apTempC.value ?: 0f, 0.01f)
+        assertEquals(ThermalStatusLevel.MODERATE, dState.thermalStatus.value)
+        assertEquals(2000L, dState.memoryAvailableMb.value)
+        assertEquals(0.12f, dState.memoryPsiAvg10.value ?: 0f, 0.01f)
+        assertEquals(0, dState.activeRefreshRateMode.value)
+        assertEquals("com.google.android.youtube", dState.foregroundPackage.value)
+        assertEquals(PrivilegeTier.TIER_0_STOCK, dState.privilegeTier)
     }
 }

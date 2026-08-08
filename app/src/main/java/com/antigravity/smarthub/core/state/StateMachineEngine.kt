@@ -2,14 +2,15 @@ package com.antigravity.smarthub.core.state
 
 import com.antigravity.smarthub.core.model.DeviceState
 import com.antigravity.smarthub.core.model.SmartHubProfile
-import com.antigravity.smarthub.core.model.SystemAction
 import com.antigravity.smarthub.core.model.ThermalStatusLevel
+import com.antigravity.smarthub.core.telemetry.TelemetryState
+import java.util.Calendar
 
 data class ExtendedDeviceState(
     val baseState: DeviceState,
     val isMediaPlaying: Boolean = false,
     val isNavigationActive: Boolean = false,
-    val currentHourOfDay: Int = 12,
+    val currentHourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY),
     val screenOffDurationMs: Long = 0L
 )
 
@@ -34,7 +35,7 @@ class StateMachineEngine {
         "com.kunpo88.baba2.tay"
     )
 
-    fun updateState(state: ExtendedDeviceState, currentTimeMs: Long = System.currentTimeMillis()): ResolvedState {
+    fun updateState(state: ExtendedDeviceState, currentTimeMs: Long = System.currentTimeMillis()): SmartHubProfile {
         val targetCandidate = determineTargetProfile(state)
 
         if (targetCandidate != currentProfile) {
@@ -65,44 +66,58 @@ class StateMachineEngine {
             candidateSinceMs = 0L
         }
 
-        return buildResolvedState(currentProfile, state.baseState)
+        return currentProfile
     }
 
     private fun determineTargetProfile(state: ExtendedDeviceState): SmartHubProfile {
         val base = state.baseState
 
-        // P0: Thermal Emergency Check
-        if (base.thermalStatus == ThermalStatusLevel.CRITICAL ||
-            base.thermalStatus == ThermalStatusLevel.SEVERE ||
-            base.batteryTempC >= 43.0f ||
-            base.apTempC >= 48.0f
-        ) {
+        // P0: Thermal Emergency Check (Quality-aware: require thermal value to be AVAILABLE)
+        val isThermalStatusCritical = base.thermalStatus.state == TelemetryState.AVAILABLE &&
+                (base.thermalStatus.value == ThermalStatusLevel.CRITICAL || base.thermalStatus.value == ThermalStatusLevel.SEVERE)
+
+        val isBatteryTempCritical = base.batteryTempC.state == TelemetryState.AVAILABLE &&
+                (base.batteryTempC.value ?: 0f) >= 43.0f
+
+        val isApTempCritical = base.apTempC.state == TelemetryState.AVAILABLE &&
+                (base.apTempC.value ?: 0f) >= 48.0f
+
+        if (isThermalStatusCritical || isBatteryTempCritical || isApTempCritical) {
             return SmartHubProfile.P0_THERMAL_EMERGENCY
         }
 
-        // P1: Critical Battery Check
-        if (base.batteryPercent <= 15 && !base.isCharging) {
+        // P1: Critical Battery Check (Quality-aware: battery percent must be AVAILABLE and <= 15%)
+        val isBatteryAvailable = base.batteryPercent.state == TelemetryState.AVAILABLE
+        val batteryLevel = base.batteryPercent.value ?: 100
+        val isCharging = base.isCharging.value ?: false
+
+        if (isBatteryAvailable && batteryLevel <= 15 && !isCharging) {
             return SmartHubProfile.P1_CRITICAL_BATTERY
         }
 
-        // P2: Charging Thermal Guard
-        if (base.isCharging && base.batteryTempC >= 39.0f) {
+        // P2: Charging Thermal Guard (Quality-aware: requires charging AVAILABLE and batteryTemp AVAILABLE)
+        val isBatteryTempWarm = base.batteryTempC.state == TelemetryState.AVAILABLE && (base.batteryTempC.value ?: 0f) >= 39.0f
+        if (isCharging && isBatteryTempWarm) {
             return SmartHubProfile.P2_CHARGING_THERMAL_GUARD
         }
 
         // P3: Gaming & High Load
-        if (gamingPackages.contains(base.foregroundPackage)) {
+        val fgPkg = base.foregroundPackage.value ?: ""
+        if (base.foregroundPackage.state == TelemetryState.AVAILABLE && gamingPackages.contains(fgPkg)) {
             return SmartHubProfile.P3_GAMING_HIGH_LOAD
         }
 
-        // P4: Media Playback (Requires active MediaSession Playback, NOT just package foreground)
+        // P4: Media Playback
         if (state.isMediaPlaying) {
             return SmartHubProfile.P4_MEDIA_READING
         }
 
         // P6: Overnight Deep Idle Condition
+        val isScreenOn = base.isScreenOn.value ?: true
         val isOvernightHours = state.currentHourOfDay >= 23 || state.currentHourOfDay < 6
-        if (!base.isScreenOn && isOvernightHours && !state.isMediaPlaying && !state.isNavigationActive && state.screenOffDurationMs >= 900_000L) {
+        val isScreenOffLongEnough = !isScreenOn && state.screenOffDurationMs >= 900_000L
+
+        if (!isScreenOn && isOvernightHours && !state.isMediaPlaying && !state.isNavigationActive && isScreenOffLongEnough) {
             return SmartHubProfile.P6_OVERNIGHT_DEEP_IDLE
         }
 
@@ -110,54 +125,8 @@ class StateMachineEngine {
         return SmartHubProfile.P5_DAILY_ADAPTIVE
     }
 
-    private fun buildResolvedState(
-        profile: SmartHubProfile,
-        base: DeviceState
-    ): ResolvedState {
-        return when (profile) {
-            SmartHubProfile.P0_THERMAL_EMERGENCY -> ResolvedState(
-                activeProfile = profile,
-                rationale = "Thermal status ${base.thermalStatus}. Cooling override active.",
-                recommendedActions = listOf(SystemAction.SetRefreshRate(targetMode = 1))
-            )
-            SmartHubProfile.P1_CRITICAL_BATTERY -> ResolvedState(
-                activeProfile = profile,
-                rationale = "Battery at ${base.batteryPercent}%. Energy saver active.",
-                recommendedActions = listOf(SystemAction.SetRefreshRate(targetMode = 1))
-            )
-            SmartHubProfile.P2_CHARGING_THERMAL_GUARD -> ResolvedState(
-                activeProfile = profile,
-                rationale = "Device charging with elevated temp (${base.batteryTempC}°C). Thermal guard active.",
-                recommendedActions = listOf(SystemAction.SetRefreshRate(targetMode = 1))
-            )
-            SmartHubProfile.P3_GAMING_HIGH_LOAD -> ResolvedState(
-                activeProfile = profile,
-                rationale = "Game foreground package ${base.foregroundPackage} active. High performance mode.",
-                recommendedActions = listOf(
-                    SystemAction.SetRefreshRate(targetMode = 0),
-                    SystemAction.SetStandbyBucket(base.foregroundPackage, "active")
-                )
-            )
-            SmartHubProfile.P4_MEDIA_READING -> ResolvedState(
-                activeProfile = profile,
-                rationale = "Active MediaSession playback detected. 60Hz playback energy saver active.",
-                recommendedActions = listOf(SystemAction.SetRefreshRate(targetMode = 1))
-            )
-            SmartHubProfile.P6_OVERNIGHT_DEEP_IDLE -> ResolvedState(
-                activeProfile = profile,
-                rationale = "Screen off overnight idle (>15m). Deep idle energy saver active.",
-                recommendedActions = listOf(SystemAction.SetRefreshRate(targetMode = 1))
-            )
-            SmartHubProfile.P5_DAILY_ADAPTIVE -> ResolvedState(
-                activeProfile = profile,
-                rationale = "Standard daily usage context. Adaptive 120Hz/60Hz active.",
-                recommendedActions = listOf(SystemAction.SetRefreshRate(targetMode = 0))
-            )
-        }
-    }
-
     fun evaluateState(state: DeviceState): Pair<SmartHubProfile, String> {
-        val resolved = updateState(ExtendedDeviceState(baseState = state))
-        return Pair(resolved.activeProfile, resolved.rationale)
+        val profile = updateState(ExtendedDeviceState(baseState = state))
+        return Pair(profile, "State profile selected: ${profile.displayName}")
     }
 }
