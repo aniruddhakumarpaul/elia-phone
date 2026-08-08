@@ -68,16 +68,18 @@ object AppModule {
         connection: ShizukuServiceConnection,
         safetyGovernor: SafetyGovernor,
         baselineRepository: BaselineRepository,
-        displayObserver: DisplayTelemetryObserver
+        displayObserver: DisplayTelemetryObserver,
+        actionLedger: ActionLedger
     ): SystemActionExecutor {
         return SystemActionExecutor(
-            connection,
+            serviceProvider = { connection.userService },
             safetyGovernor,
             baselineRepository,
             effectiveRefreshRateReader = {
                 displayObserver.getDisplayMetrics().value?.physicalRefreshRateHz?.value
             },
-            stabilizationDelayMs = 750L
+            stabilizationDelayMs = 750L,
+            ownershipLedger = actionLedger
         )
     }
 

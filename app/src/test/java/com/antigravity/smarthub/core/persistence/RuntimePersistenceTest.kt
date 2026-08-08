@@ -14,6 +14,7 @@ class RuntimePersistenceTest {
     @Test
     fun settingsRoundTripAndFailSafeCorruptState() {
         val file = File.createTempFile("smarthub-settings", ".properties")
+        file.delete()
         file.deleteOnExit()
         val first = OptimizationSettingsRepository(file)
         first.setOptimizationEnabled(true)
@@ -34,6 +35,7 @@ class RuntimePersistenceTest {
     @Test
     fun ownershipRoundTripAndVerificationPersist() {
         val file = File.createTempFile("smarthub-ownership", ".properties")
+        file.delete()
         file.deleteOnExit()
         val action = SystemAction.SetRefreshRate(1)
         val first = ActionLedger(file)

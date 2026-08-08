@@ -4,96 +4,130 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Thread-safe, persistent repository for initial device baseline values.
- * Saves baseline data to persistent storage (survives app process death & reboot).
- * Strictly preserves initial values; NEVER overwrites an established baseline during subsequent profile switches.
+ * Durable, exact baseline store. A corrupt or unreadable file is never treated as empty.
+ * Production callers must check the Boolean result before crossing a mutation boundary.
  */
 class BaselineRepository(
-    private val storageDir: File? = null
+    private val storageDir: File? = null,
+    failureInjector: PersistenceFailureInjector = NoPersistenceFailure
 ) {
-
     private val settingBaselines = ConcurrentHashMap<String, String>()
     private val standbyBucketBaselines = ConcurrentHashMap<String, String>()
     private val appOpsBaselines = ConcurrentHashMap<String, String>()
-
     private val storageFile: File? = storageDir?.let { File(it, "smart_hub_baselines.properties") }
+    private val store: AtomicPropertiesStore? = storageFile?.let { AtomicPropertiesStore(it, failureInjector) }
 
-    init {
-        loadFromStorage()
+    @Volatile var persistenceCorrupt: Boolean = false
+        private set
+    @Volatile var persistenceFailed: Boolean = false
+        private set
+    @Volatile var lastPersistenceError: String? = null
+        private set
+
+    init { loadFromStorage() }
+
+    fun isHealthy(): Boolean = !persistenceCorrupt && !persistenceFailed
+
+    private fun verifyExistingDurability(): Boolean {
+        val file = storageFile ?: return true
+        if (settingBaselines.isEmpty() && standbyBucketBaselines.isEmpty() && appOpsBaselines.isEmpty()) return true
+        return try {
+            if (!file.exists()) throw IllegalStateException("Baseline file disappeared")
+            if (store!!.read().getProperty("formatVersion") != "1") throw IllegalStateException("Baseline format marker missing")
+            true
+        } catch (e: Exception) {
+            persistenceCorrupt = true
+            lastPersistenceError = "Baseline durability check failed: ${e.message}"
+            false
+        }
     }
 
     @Synchronized
-    fun saveSettingBaselineOnce(table: String, key: String, originalValue: String) {
+    fun saveSettingBaselineOnce(table: String, key: String, originalValue: String): Boolean {
+        if (!isHealthy() || !verifyExistingDurability()) return false
         val compositeKey = "setting:$table:$key"
-        if (!settingBaselines.containsKey(compositeKey)) {
-            settingBaselines[compositeKey] = originalValue
-            persistToStorage()
-        }
+        if (settingBaselines.containsKey(compositeKey)) return true
+        val next = snapshotProperties()
+        next.setProperty(compositeKey, originalValue)
+        if (!persist(next)) return false
+        settingBaselines[compositeKey] = originalValue
+        return true
     }
+
+    @Synchronized fun getSettingBaseline(table: String, key: String): String? =
+        if (persistenceCorrupt) null else settingBaselines["setting:$table:$key"]
 
     @Synchronized
-    fun getSettingBaseline(table: String, key: String): String? {
-        return settingBaselines["setting:$table:$key"]
+    fun saveStandbyBucketBaselineOnce(packageName: String, originalBucket: String): Boolean {
+        if (!isHealthy() || !verifyExistingDurability()) return false
+        if (standbyBucketBaselines.containsKey(packageName)) return true
+        val next = snapshotProperties()
+        next.setProperty("bucket:$packageName", originalBucket)
+        if (!persist(next)) return false
+        standbyBucketBaselines[packageName] = originalBucket
+        return true
     }
+
+    @Synchronized fun getStandbyBucketBaseline(packageName: String): String? =
+        if (persistenceCorrupt) null else standbyBucketBaselines[packageName]
 
     @Synchronized
-    fun saveStandbyBucketBaselineOnce(packageName: String, originalBucket: String) {
-        if (!standbyBucketBaselines.containsKey(packageName)) {
-            standbyBucketBaselines[packageName] = originalBucket
-            persistToStorage()
-        }
+    fun saveAppOpsBaselineOnce(packageName: String, originalMode: String): Boolean {
+        if (!isHealthy() || !verifyExistingDurability()) return false
+        if (appOpsBaselines.containsKey(packageName)) return true
+        val next = snapshotProperties()
+        next.setProperty("appops:$packageName", originalMode)
+        if (!persist(next)) return false
+        appOpsBaselines[packageName] = originalMode
+        return true
     }
 
-    @Synchronized
-    fun getStandbyBucketBaseline(packageName: String): String? {
-        return standbyBucketBaselines[packageName]
+    @Synchronized fun getAppOpsBaseline(packageName: String): String? =
+        if (persistenceCorrupt) null else appOpsBaselines[packageName]
+
+    private fun snapshotProperties(): java.util.Properties {
+        val props = java.util.Properties()
+        props.setProperty("formatVersion", "1")
+        settingBaselines.forEach { (k, v) -> props.setProperty(k, v) }
+        standbyBucketBaselines.forEach { (k, v) -> props.setProperty("bucket:$k", v) }
+        appOpsBaselines.forEach { (k, v) -> props.setProperty("appops:$k", v) }
+        return props
     }
 
-    @Synchronized
-    fun saveAppOpsBaselineOnce(packageName: String, originalMode: String) {
-        if (!appOpsBaselines.containsKey(packageName)) {
-            appOpsBaselines[packageName] = originalMode
-            persistToStorage()
-        }
-    }
-
-    @Synchronized
-    fun getAppOpsBaseline(packageName: String): String? {
-        return appOpsBaselines[packageName]
-    }
-
-    private fun persistToStorage() {
-        storageFile?.let { file ->
-            try {
-                val props = java.util.Properties()
-                settingBaselines.forEach { (k, v) -> props.setProperty(k, v) }
-                standbyBucketBaselines.forEach { (k, v) -> props.setProperty("bucket:$k", v) }
-                appOpsBaselines.forEach { (k, v) -> props.setProperty("appops:$k", v) }
-                file.outputStream().use { props.store(it, "Smart Hub Baseline Snapshots") }
-            } catch (e: Exception) {
-                // Ignore storage write exceptions in non-file unit test contexts
-            }
+    private fun persist(properties: java.util.Properties): Boolean {
+        val atomicStore = store ?: return true
+        return try {
+            atomicStore.write(properties)
+            true
+        } catch (e: Exception) {
+            persistenceFailed = true
+            lastPersistenceError = e.message ?: "Unknown baseline persistence failure"
+            false
         }
     }
 
     private fun loadFromStorage() {
-        storageFile?.let { file ->
-            if (file.exists()) {
-                try {
-                    val props = java.util.Properties()
-                    file.inputStream().use { props.load(it) }
-                    props.stringPropertyNames().forEach { name ->
-                        val value = props.getProperty(name)
-                        when {
-                            name.startsWith("setting:") -> settingBaselines[name] = value
-                            name.startsWith("bucket:") -> standbyBucketBaselines[name.removePrefix("bucket:")] = value
-                            name.startsWith("appops:") -> appOpsBaselines[name.removePrefix("appops:")] = value
-                        }
-                    }
-                } catch (e: Exception) {
-                    // Ignore storage read errors
+        val atomicStore = store ?: return
+        if (!storageFile!!.exists()) return
+        try {
+            val props = atomicStore.read()
+            if (props.getProperty("formatVersion") != "1") throw IllegalArgumentException("Missing baseline format marker")
+            props.stringPropertyNames().forEach { name ->
+                val value = props.getProperty(name) ?: throw IllegalArgumentException("Null baseline value")
+                when {
+                    name.startsWith("setting:") -> settingBaselines[name] = value
+                    name.startsWith("bucket:") -> standbyBucketBaselines[name.removePrefix("bucket:")] = value
+                    name.startsWith("appops:") -> appOpsBaselines[name.removePrefix("appops:")] = value
+                    name == "formatVersion" -> Unit
+                    else -> throw IllegalArgumentException("Unknown baseline record '$name'")
                 }
             }
+        } catch (e: Exception) {
+            settingBaselines.clear()
+            standbyBucketBaselines.clear()
+            appOpsBaselines.clear()
+            persistenceCorrupt = true
+            lastPersistenceError = "Unreadable baseline storage: ${e.message}"
         }
     }
 }

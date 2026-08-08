@@ -15,6 +15,7 @@ import com.antigravity.smarthub.core.model.SafetyVetoResult
 import com.antigravity.smarthub.core.model.SmartHubProfile
 import com.antigravity.smarthub.core.model.SystemAction
 import com.antigravity.smarthub.core.persistence.OptimizationSettingsRepository
+import com.antigravity.smarthub.core.persistence.BaselineRepository
 import com.antigravity.smarthub.core.safety.AppClassification
 import com.antigravity.smarthub.core.safety.AppClassifier
 import com.antigravity.smarthub.core.safety.SafetyGovernor
@@ -84,6 +85,7 @@ class OptimizationController(
     private val settingsRepository: OptimizationSettingsRepository = OptimizationSettingsRepository(),
     private val appContext: Context? = null,
     private val appClassifier: AppClassifier = AppClassifier(),
+    private val baselineRepository: BaselineRepository = BaselineRepository(),
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
 ) {
     private val _uiState = MutableStateFlow(ControllerUiState())
@@ -111,7 +113,11 @@ class OptimizationController(
                 manualProfileOverride = manual,
                 startupWarning = when {
                     settingsRepository.isCorrupt() -> "Runtime settings were corrupt; Smart Hub is OFF and will not mutate settings."
+                    !settingsRepository.isPersistenceHealthy() -> "Runtime settings persistence failed; Smart Hub will not claim a changed state."
+                    baselineRepository.persistenceCorrupt -> "Baseline storage is corrupt/unreadable; privileged mutation is blocked."
+                    baselineRepository.persistenceFailed -> "Baseline persistence failed; privileged mutation is blocked."
                     actionLedger.persistenceCorrupt -> "Smart Hub found corrupt ownership state; restoration is blocked until reviewed."
+                    actionLedger.persistenceFailed -> "Ownership journal persistence failed; privileged mutation is blocked."
                     else -> null
                 }
             )
@@ -135,8 +141,11 @@ class OptimizationController(
     }
 
     fun setOptimizationEnabled(enabled: Boolean) {
-        settingsRepository.setOptimizationEnabled(enabled)
-        _uiState.update { it.copy(optimizationEnabled = enabled) }
+        if (!settingsRepository.setOptimizationEnabled(enabled)) {
+            _uiState.update { it.copy(startupWarning = "Could not durably save the requested ON/OFF state; current state was not changed.") }
+            return
+        }
+        _uiState.update { it.copy(optimizationEnabled = enabled, startupWarning = null) }
         scope.launch {
             decisionMutex.withLock {
                 if (enabled) {
@@ -156,14 +165,20 @@ class OptimizationController(
     }
 
     fun setAutomaticMode(automatic: Boolean) {
-        settingsRepository.setAutomaticMode(automatic)
+        if (!settingsRepository.setAutomaticMode(automatic)) {
+            _uiState.update { it.copy(startupWarning = "Could not durably save automatic/manual mode; current mode was not changed.") }
+            return
+        }
         stateMachineEngine.setManualProfileOverride(if (automatic) null else settingsRepository.getManualProfile())
         _uiState.update { it.copy(automaticMode = automatic, manualProfileOverride = settingsRepository.getManualProfile()) }
         scope.launch { latestSnapshot?.let { evaluateAndOptimize(snapshotToExtendedDeviceState(it)) } }
     }
 
     fun setManualProfile(profile: SmartHubProfile) {
-        settingsRepository.setManualProfile(profile)
+        if (!settingsRepository.setManualProfile(profile)) {
+            _uiState.update { it.copy(startupWarning = "Could not durably save the manual profile; current profile was not changed.") }
+            return
+        }
         stateMachineEngine.setManualProfileOverride(profile)
         _uiState.update { it.copy(automaticMode = false, manualProfileOverride = profile) }
         scope.launch { latestSnapshot?.let { evaluateAndOptimize(snapshotToExtendedDeviceState(it)) } }
@@ -275,6 +290,11 @@ class OptimizationController(
             return@withLock
         }
 
+        if (baselineRepository.persistenceCorrupt || baselineRepository.persistenceFailed || actionLedger.persistenceFailed) {
+            _uiState.update { it.copy(startupWarning = "Durable baseline/ownership persistence is unavailable; no privileged mutation is allowed.") }
+            return@withLock
+        }
+
         if (actionLedger.getCurrentlyAppliedActions().isNotEmpty() && !startupReconciled) {
             reconcilePersistedOwnershipLocked(extState)
             startupReconciled = true
@@ -352,10 +372,12 @@ class OptimizationController(
                 restored = false
             )
             _uiState.update { it.copy(lastVerificationResult = result.verifiedValue ?: result.errorMessage ?: "Unavailable") }
-            if (result.success) actionLedger.recordAppliedAction(action, result.verifiedValue, result.capabilityResult)
-            else if (result.capabilityResult == CapabilityResult.IGNORED_BY_OEM ||
+            if (baselineRepository.persistenceCorrupt || baselineRepository.persistenceFailed || actionLedger.persistenceFailed) {
+                _uiState.update { it.copy(startupWarning = "Durable persistence failed; Smart Hub has blocked further privileged mutation and will reconcile safely.") }
+            }
+            if (!result.success && (result.capabilityResult == CapabilityResult.IGNORED_BY_OEM ||
                 result.errorMessage?.contains("effective display", ignoreCase = true) == true
-            ) {
+            )) {
                 actionLedger.recordCapabilitySuppression(key)
             }
         }
@@ -368,15 +390,17 @@ class OptimizationController(
         val owned = actionLedger.getCurrentlyAppliedActions()
         var allVerified = true
         for ((key, action) in owned) {
+            val journalState = actionLedger.getJournalState(key)
             val current = actionExecutor.readCurrentOwnedValue(key)
             val expected = expectedValue(action)
-            if (current == expected) {
-                actionLedger.recordVerification(key, current)
+            if (journalState == com.antigravity.smarthub.core.state.OwnershipJournalState.APPLIED && current == expected) {
+                if (!actionLedger.recordVerification(key, current)) allVerified = false
             } else {
                 allVerified = false
+                actionLedger.markRestorePending(key)
                 val result = actionExecutor.restoreOriginal(key, state.baseState)
-                if (result.success) actionLedger.recordRestoredAction(key)
-                else _uiState.update { it.copy(restorationPending = true, startupWarning = "Smart Hub detected settings owned by a previous interrupted session; restoration is pending.") }
+                val cleared = result.success && actionLedger.recordRestoredAction(key)
+                if (!cleared) _uiState.update { it.copy(restorationPending = true, startupWarning = "Smart Hub detected settings owned by a previous interrupted session; restoration is pending.") }
             }
         }
         if (allVerified && owned.isNotEmpty()) {
@@ -387,11 +411,10 @@ class OptimizationController(
     private suspend fun restoreOwnedActionsLocked(state: ExtendedDeviceState): Boolean {
         var allRestored = true
         for ((key, action) in actionLedger.getCurrentlyAppliedActions()) {
-            if (actionLedger.isCooldownActive(action, bypass = true)) actionLedger.recordAttempt(action)
+            actionLedger.markRestorePending(key)
             val result = actionExecutor.restoreOriginal(key, state.baseState)
             recordResult(lastProfile, lastProfile, state, "RESTORE_$key", "Restore original baseline for $key", SafetyVetoResult(true), result, result.success)
-            if (result.success) actionLedger.recordRestoredAction(key)
-            else allRestored = false
+            if (!result.success || !actionLedger.recordRestoredAction(key)) allRestored = false
         }
         return allRestored && actionLedger.getCurrentlyAppliedActions().isEmpty()
     }

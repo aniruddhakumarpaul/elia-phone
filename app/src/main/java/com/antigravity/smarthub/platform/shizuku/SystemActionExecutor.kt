@@ -5,6 +5,7 @@ import com.antigravity.smarthub.core.model.CapabilityResult
 import com.antigravity.smarthub.core.model.DeviceState
 import com.antigravity.smarthub.core.model.SystemAction
 import com.antigravity.smarthub.core.persistence.BaselineRepository
+import com.antigravity.smarthub.core.state.ActionLedger
 import com.antigravity.smarthub.core.safety.SafetyGovernor
 
 data class ActionExecutionResult(
@@ -28,7 +29,8 @@ class SystemActionExecutor(
     private val safetyGovernor: SafetyGovernor,
     private val baselineRepository: BaselineRepository,
     private val effectiveRefreshRateReader: (() -> Float?)? = null,
-    private val stabilizationDelayMs: Long = 500L
+    private val stabilizationDelayMs: Long = 500L,
+    private val ownershipLedger: ActionLedger? = null
 ) {
 
     constructor(
@@ -110,18 +112,24 @@ class SystemActionExecutor(
         val baselineMode = baseline.toIntOrNull()?.takeIf { it == 0 || it == 1 }
             ?: return ActionExecutionResult(false, baseline, null, CapabilityResult.UNAVAILABLE, "Invalid refresh baseline '$baseline'; mutation refused", false, action.targetMode.toString())
 
-        baselineRepository.saveSettingBaselineOnce("secure", "refresh_rate_mode", baseline)
+        if (!baselineRepository.isHealthy() || !baselineRepository.saveSettingBaselineOnce("secure", "refresh_rate_mode", baseline)) {
+            return ActionExecutionResult(false, baseline, null, CapabilityResult.UNAVAILABLE, "Durable baseline persistence failed; mutation refused", false, action.targetMode.toString())
+        }
+        if (!beginOwnership(action, baseline)) {
+            return ActionExecutionResult(false, baseline, null, CapabilityResult.UNAVAILABLE, "Durable ownership journal failed; mutation refused", false, action.targetMode.toString())
+        }
 
         // Execute Mutation
         val status = userService.setRefreshRateMode(action.targetMode)
         if (status != 0) {
-            return ActionExecutionResult(false, baseline, null, CapabilityResult.UNAVAILABLE, "IPC setRefreshRateMode failed with code $status", false, action.targetMode.toString())
+            val rollback = restoreAfterFailedMutation(action, baseline) { restoreRefreshRate(baselineMode, baseline, userService) }
+            return ActionExecutionResult(false, baseline, null, CapabilityResult.UNAVAILABLE, "IPC setRefreshRateMode failed with code $status; restoration verified=${rollback.success}", rollback.success, action.targetMode.toString())
         }
 
         // Readback Verification
         val verified = userService.readSetting("secure", "refresh_rate_mode")
         if (verified != action.targetMode.toString()) {
-            val rollbackSuccess = rollbackRefreshRate(baselineMode, baseline, userService)
+            val rollbackSuccess = restoreAfterFailedMutation(action, baseline) { restoreRefreshRate(baselineMode, baseline, userService) }.success
             val capability = when {
                 verified == null -> CapabilityResult.UNAVAILABLE
                 verified == baseline -> CapabilityResult.IGNORED_BY_OEM
@@ -140,7 +148,7 @@ class SystemActionExecutor(
 
         val effective = verifyEffectiveRefreshRate(action.targetMode)
         if (effective != null && !effective.first) {
-            val rollbackSuccess = rollbackRefreshRate(baselineMode, baseline, userService)
+            val rollbackSuccess = restoreAfterFailedMutation(action, baseline) { restoreRefreshRate(baselineMode, baseline, userService) }.success
             return ActionExecutionResult(
                 success = false,
                 baselineCaptured = baseline,
@@ -152,6 +160,10 @@ class SystemActionExecutor(
             )
         }
 
+        val ownershipFailure = commitOwnershipOrRollback(action, baseline, verified, if (effectiveRefreshRateReader == null) CapabilityResult.PARTIALLY_SUPPORTED else CapabilityResult.SUPPORTED) {
+            restoreRefreshRate(baselineMode, baseline, userService)
+        }
+        if (ownershipFailure != null) return ownershipFailure
         return ActionExecutionResult(
             success = true,
             baselineCaptured = baseline,
@@ -175,12 +187,18 @@ class SystemActionExecutor(
             return ActionExecutionResult(false, baselineBucket, null, CapabilityResult.UNAVAILABLE, "Unsafe: Captured standby bucket '$baselineBucket' cannot be safely restored for ${action.packageName}", false, action.targetBucket)
         }
 
-        baselineRepository.saveStandbyBucketBaselineOnce(action.packageName, baselineBucket)
+        if (!baselineRepository.isHealthy() || !baselineRepository.saveStandbyBucketBaselineOnce(action.packageName, baselineBucket)) {
+            return ActionExecutionResult(false, baselineBucket, null, CapabilityResult.UNAVAILABLE, "Durable baseline persistence failed; mutation refused", false, action.targetBucket)
+        }
+        if (!beginOwnership(action, baselineBucket)) {
+            return ActionExecutionResult(false, baselineBucket, null, CapabilityResult.UNAVAILABLE, "Durable ownership journal failed; mutation refused", false, action.targetBucket)
+        }
 
         // Execute Mutation
         val status = userService.setStandbyBucket(action.packageName, action.targetBucket)
         if (status != 0) {
-            return ActionExecutionResult(false, baselineBucket, null, CapabilityResult.UNAVAILABLE, "IPC setStandbyBucket failed with code $status", false, action.targetBucket)
+            val rollback = restoreAfterFailedMutation(action, baselineBucket) { restoreStandbyBucket(action.packageName, baselineBucket, userService) }
+            return ActionExecutionResult(false, baselineBucket, null, CapabilityResult.UNAVAILABLE, "IPC setStandbyBucket failed with code $status; restoration verified=${rollback.success}", rollback.success, action.targetBucket)
         }
 
         // Readback Verification
@@ -188,10 +206,7 @@ class SystemActionExecutor(
         val readbackBucket = bucketCodeToString(readbackCode)
         if (readbackBucket != action.targetBucket) {
             // Rollback
-            userService.setStandbyBucket(action.packageName, baselineBucket)
-            val verifyRollbackCode = userService.readStandbyBucket(action.packageName)
-            val verifyRollbackBucket = bucketCodeToString(verifyRollbackCode)
-            val rollbackSuccess = (verifyRollbackBucket == baselineBucket)
+            val rollbackSuccess = restoreAfterFailedMutation(action, baselineBucket) { restoreStandbyBucket(action.packageName, baselineBucket, userService) }.success
             return ActionExecutionResult(
                 success = false,
                 baselineCaptured = baselineBucket,
@@ -203,6 +218,10 @@ class SystemActionExecutor(
             )
         }
 
+        val ownershipFailure = commitOwnershipOrRollback(action, baselineBucket, readbackBucket, CapabilityResult.SUPPORTED) {
+            restoreStandbyBucket(action.packageName, baselineBucket, userService)
+        }
+        if (ownershipFailure != null) return ownershipFailure
         return ActionExecutionResult(
             success = true,
             baselineCaptured = baselineBucket,
@@ -225,13 +244,19 @@ class SystemActionExecutor(
             return ActionExecutionResult(false, baselineMode, null, CapabilityResult.UNAVAILABLE, "Unsafe: Captured AppOps mode '$baselineMode' cannot be safely restored for ${action.packageName}", false, if (action.allow) "allow" else "ignore")
         }
 
-        baselineRepository.saveAppOpsBaselineOnce(action.packageName, baselineMode)
+        if (!baselineRepository.isHealthy() || !baselineRepository.saveAppOpsBaselineOnce(action.packageName, baselineMode)) {
+            return ActionExecutionResult(false, baselineMode, null, CapabilityResult.UNAVAILABLE, "Durable baseline persistence failed; mutation refused", false, if (action.allow) "allow" else "ignore")
+        }
+        if (!beginOwnership(action, baselineMode)) {
+            return ActionExecutionResult(false, baselineMode, null, CapabilityResult.UNAVAILABLE, "Durable ownership journal failed; mutation refused", false, if (action.allow) "allow" else "ignore")
+        }
 
         // Execute Mutation
         val targetMode = if (action.allow) "allow" else "ignore"
         val status = userService.setAppOpsBackground(action.packageName, targetMode)
         if (status != 0) {
-            return ActionExecutionResult(false, baselineMode, null, CapabilityResult.UNAVAILABLE, "IPC setAppOpsBackground failed with code $status", false, targetMode)
+            val rollback = restoreAfterFailedMutation(action, baselineMode) { restoreAppOps(action.packageName, baselineMode, userService) }
+            return ActionExecutionResult(false, baselineMode, null, CapabilityResult.UNAVAILABLE, "IPC setAppOpsBackground failed with code $status; restoration verified=${rollback.success}", rollback.success, targetMode)
         }
 
         // Readback Verification
@@ -241,10 +266,7 @@ class SystemActionExecutor(
 
         if (!isVerified) {
             // Rollback using exact original baseline string (including 'default')
-            userService.setAppOpsBackground(action.packageName, baselineMode)
-            val verifyRollbackOps = userService.readAppOpsBackground(action.packageName) ?: ""
-            val actualRollbackMode = parseExactAppOpsMode(verifyRollbackOps)
-            val rollbackSuccess = (actualRollbackMode == baselineMode)
+            val rollbackSuccess = restoreAfterFailedMutation(action, baselineMode) { restoreAppOps(action.packageName, baselineMode, userService) }.success
             return ActionExecutionResult(
                 success = false,
                 baselineCaptured = baselineMode,
@@ -256,6 +278,10 @@ class SystemActionExecutor(
             )
         }
 
+        val ownershipFailure = commitOwnershipOrRollback(action, baselineMode, targetMode, CapabilityResult.SUPPORTED) {
+            restoreAppOps(action.packageName, baselineMode, userService)
+        }
+        if (ownershipFailure != null) return ownershipFailure
         return ActionExecutionResult(
             success = true,
             baselineCaptured = baselineMode,
@@ -285,6 +311,51 @@ class SystemActionExecutor(
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun beginOwnership(action: SystemAction, baseline: String): Boolean =
+        ownershipLedger?.recordPendingAction(action, baseline) ?: true
+
+    private fun restoreAfterFailedMutation(
+        action: SystemAction,
+        baseline: String,
+        restore: () -> ActionExecutionResult
+    ): ActionExecutionResult {
+        val key = ownershipLedger?.getActionKey(action)
+        if (key != null) ownershipLedger?.markRestorePending(key)
+        val restored = restore()
+        if (!restored.success || key == null) return restored
+        val cleared = ownershipLedger?.recordRestoredAction(key) == true
+        return if (cleared) restored else restored.copy(
+            success = false,
+            errorMessage = "Baseline restored but durable journal clear failed; ownership remains pending",
+            rolledBack = true
+        )
+    }
+
+    private fun commitOwnershipOrRollback(
+        action: SystemAction,
+        baseline: String,
+        verified: String?,
+        capability: CapabilityResult,
+        restore: () -> ActionExecutionResult
+    ): ActionExecutionResult? {
+        val ledger = ownershipLedger ?: return null
+        if (ledger.recordAppliedAction(action, verified, capability)) return null
+
+        val key = ledger.getActionKey(action)
+        ledger.markRestorePending(key)
+        val restored = restore()
+        val cleared = restored.success && ledger.recordRestoredAction(key)
+        return ActionExecutionResult(
+            success = false,
+            baselineCaptured = baseline,
+            verifiedValue = verified,
+            capabilityResult = CapabilityResult.UNAVAILABLE,
+            errorMessage = "Durable APPLIED journal failed; baseline restoration verified=${restored.success}, journal cleared=$cleared",
+            rolledBack = restored.success,
+            requestedValue = verified
+        )
     }
 
     /** Restore one Smart-Hub-owned key to its exact captured baseline. */

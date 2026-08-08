@@ -2,69 +2,91 @@ package com.antigravity.smarthub.core.persistence
 
 import com.antigravity.smarthub.core.model.SmartHubProfile
 import java.io.File
+import java.util.Properties
 
-/** App-private durable user runtime settings. Defaults are fail-safe: optimization is OFF. */
-class OptimizationSettingsRepository(private val storageFile: File? = null) {
+/** Atomic app-private runtime settings. A failed write never reports the new value as durable. */
+class OptimizationSettingsRepository(
+    private val storageFile: File? = null,
+    failureInjector: PersistenceFailureInjector = NoPersistenceFailure
+) {
+    private val store = storageFile?.let { AtomicPropertiesStore(it, failureInjector) }
     private var enabled = false
     private var automatic = true
     private var manualProfile: SmartHubProfile? = null
-    private var corrupt = false
 
-    init {
-        load()
-    }
+    @Volatile var persistenceCorrupt: Boolean = false
+        private set
+    @Volatile var persistenceFailed: Boolean = false
+        private set
+    @Volatile var lastPersistenceError: String? = null
+        private set
+
+    init { load() }
 
     @Synchronized fun isOptimizationEnabled(): Boolean = enabled
     @Synchronized fun isAutomaticMode(): Boolean = automatic
     @Synchronized fun getManualProfile(): SmartHubProfile? = manualProfile
-    @Synchronized fun isCorrupt(): Boolean = corrupt
+    @Synchronized fun isCorrupt(): Boolean = persistenceCorrupt
+    @Synchronized fun isPersistenceHealthy(): Boolean = !persistenceCorrupt && !persistenceFailed
 
-    @Synchronized fun setOptimizationEnabled(value: Boolean) {
+    @Synchronized fun setOptimizationEnabled(value: Boolean): Boolean {
+        val old = enabled
         enabled = value
-        persist()
+        return if (persist()) true else { enabled = old; false }
     }
 
-    @Synchronized fun setAutomaticMode(value: Boolean) {
+    @Synchronized fun setAutomaticMode(value: Boolean): Boolean {
+        val oldAutomatic = automatic
+        val oldProfile = manualProfile
         automatic = value
         if (value) manualProfile = null
-        persist()
+        return if (persist()) true else { automatic = oldAutomatic; manualProfile = oldProfile; false }
     }
 
-    @Synchronized fun setManualProfile(profile: SmartHubProfile?) {
+    @Synchronized fun setManualProfile(profile: SmartHubProfile?): Boolean {
+        val oldAutomatic = automatic
+        val oldProfile = manualProfile
         manualProfile = profile
         automatic = profile == null
-        persist()
+        return if (persist()) true else { automatic = oldAutomatic; manualProfile = oldProfile; false }
+    }
+
+    private fun persist(): Boolean {
+        val atomicStore = store ?: return true
+        if (!isPersistenceHealthy()) return false
+        return try {
+            val props = Properties()
+            props.setProperty("formatVersion", "1")
+            props.setProperty("optimizationEnabled", enabled.toString())
+            props.setProperty("automaticMode", automatic.toString())
+            manualProfile?.let { props.setProperty("manualProfile", it.name) }
+            atomicStore.write(props)
+            true
+        } catch (e: Exception) {
+            persistenceFailed = true
+            lastPersistenceError = e.message ?: "Unknown runtime settings persistence failure"
+            false
+        }
     }
 
     private fun load() {
         val file = storageFile ?: return
         if (!file.exists()) return
         try {
-            val props = java.util.Properties()
-            file.inputStream().use { props.load(it) }
-            enabled = props.getProperty("optimizationEnabled", "false").toBooleanStrict()
-            automatic = props.getProperty("automaticMode", "true").toBooleanStrict()
+            val props = store!!.read()
+            if (props.getProperty("formatVersion") != "1") throw IllegalArgumentException("Missing settings format marker")
+            enabled = props.getProperty("optimizationEnabled")?.toBooleanStrict()
+                ?: throw IllegalArgumentException("Missing optimizationEnabled")
+            automatic = props.getProperty("automaticMode")?.toBooleanStrict()
+                ?: throw IllegalArgumentException("Missing automaticMode")
             manualProfile = props.getProperty("manualProfile")?.let { SmartHubProfile.valueOf(it) }
             if (automatic) manualProfile = null
-        } catch (_: Exception) {
-            corrupt = true
+        } catch (e: Exception) {
+            persistenceCorrupt = true
             enabled = false
             automatic = true
             manualProfile = null
-        }
-    }
-
-    private fun persist() {
-        val file = storageFile ?: return
-        try {
-            file.parentFile?.mkdirs()
-            val props = java.util.Properties()
-            props.setProperty("optimizationEnabled", enabled.toString())
-            props.setProperty("automaticMode", automatic.toString())
-            manualProfile?.let { props.setProperty("manualProfile", it.name) }
-            file.outputStream().use { props.store(it, "Smart Hub runtime settings") }
-        } catch (_: Exception) {
-            // Runtime remains fail-safe; the next process will treat missing persistence conservatively.
+            lastPersistenceError = "Unreadable runtime settings: ${e.message}"
         }
     }
 }
