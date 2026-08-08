@@ -25,19 +25,17 @@ class AppContextObserver(
         if (context == null) return TelemetryValue.unavailable()
 
         // Priority 2: UsageStatsManager fallback
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-            if (usm != null) {
-                try {
-                    val time = System.currentTimeMillis()
-                    val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, time - 10000, time)
-                    val recent = stats?.maxByOrNull { it.lastTimeUsed }
-                    if (recent != null && !recent.packageName.isNullOrBlank()) {
-                        return TelemetryValue(recent.packageName, TelemetryState.AVAILABLE)
-                    }
-                } catch (e: Exception) {
-                    // Requires PACKAGE_USAGE_STATS permission
+        val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+        if (usm != null) {
+            try {
+                val time = System.currentTimeMillis()
+                val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, time - 10000, time)
+                val recent = stats?.maxByOrNull { it.lastTimeUsed }
+                if (recent != null && !recent.packageName.isNullOrBlank()) {
+                    return TelemetryValue(recent.packageName, TelemetryState.AVAILABLE)
                 }
+            } catch (e: Exception) {
+                // Requires PACKAGE_USAGE_STATS permission
             }
         }
 
@@ -55,6 +53,6 @@ class AppContextObserver(
             }
         }
 
-        return TelemetryValue("com.sec.android.app.launcher", TelemetryState.AVAILABLE)
+        return TelemetryValue.unavailable()
     }
 }

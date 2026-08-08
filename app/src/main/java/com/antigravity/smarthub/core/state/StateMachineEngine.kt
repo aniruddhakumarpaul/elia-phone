@@ -35,7 +35,6 @@ class StateMachineEngine {
     )
 
     fun updateState(state: ExtendedDeviceState, currentTimeMs: Long = System.currentTimeMillis()): ResolvedState {
-        val base = state.baseState
         val targetCandidate = determineTargetProfile(state)
 
         if (targetCandidate != currentProfile) {
@@ -66,7 +65,7 @@ class StateMachineEngine {
             candidateSinceMs = 0L
         }
 
-        return buildResolvedState(currentProfile, base, state)
+        return buildResolvedState(currentProfile, state.baseState)
     }
 
     private fun determineTargetProfile(state: ExtendedDeviceState): SmartHubProfile {
@@ -113,8 +112,7 @@ class StateMachineEngine {
 
     private fun buildResolvedState(
         profile: SmartHubProfile,
-        base: DeviceState,
-        extended: ExtendedDeviceState
+        base: DeviceState
     ): ResolvedState {
         return when (profile) {
             SmartHubProfile.P0_THERMAL_EMERGENCY -> ResolvedState(
@@ -156,5 +154,10 @@ class StateMachineEngine {
                 recommendedActions = listOf(SystemAction.SetRefreshRate(targetMode = 0))
             )
         }
+    }
+
+    fun evaluateState(state: DeviceState): Pair<SmartHubProfile, String> {
+        val resolved = updateState(ExtendedDeviceState(baseState = state))
+        return Pair(resolved.activeProfile, resolved.rationale)
     }
 }

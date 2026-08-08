@@ -42,12 +42,16 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideProfileResolver(): com.antigravity.smarthub.core.state.ProfileResolver = com.antigravity.smarthub.core.state.ProfileResolver()
+
+    @Provides
+    @Singleton
     fun provideSystemActionExecutor(
         connection: ShizukuServiceConnection,
         safetyGovernor: SafetyGovernor,
         baselineRepository: BaselineRepository
     ): SystemActionExecutor {
-        return SystemActionExecutor(connection.userService, safetyGovernor, baselineRepository)
+        return SystemActionExecutor(connection, safetyGovernor, baselineRepository)
     }
 
     @Provides

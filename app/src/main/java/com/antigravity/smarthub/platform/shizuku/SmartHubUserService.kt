@@ -18,14 +18,15 @@ class SmartHubUserService : ISmartHubUserService.Stub() {
 
     override fun setStandbyBucket(packageName: String?, bucket: String?): Int {
         if (packageName.isNullOrBlank() || bucket.isNullOrBlank()) return -1
-        val validBuckets = setOf("active", "working_set", "frequent", "rare", "restricted")
+        val validBuckets = setOf("exempted", "active", "working_set", "frequent", "rare", "restricted")
         if (!validBuckets.contains(bucket)) return -1
         return runCommand(arrayOf("sh", "-c", "am set-standby-bucket $packageName $bucket"))
     }
 
     override fun setAppOpsBackground(packageName: String?, mode: String?): Int {
         if (packageName.isNullOrBlank() || mode.isNullOrBlank()) return -1
-        if (mode != "allow" && mode != "ignore") return -1
+        val validModes = setOf("allow", "ignore", "deny", "default", "errored", "foreground")
+        if (!validModes.contains(mode)) return -1
         return runCommand(arrayOf("sh", "-c", "cmd appops set $packageName RUN_ANY_IN_BACKGROUND $mode"))
     }
 

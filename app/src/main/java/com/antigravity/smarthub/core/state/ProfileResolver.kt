@@ -112,4 +112,17 @@ class ProfileResolver {
             )
         )
     }
+
+    fun resolveProfile(
+        profile: SmartHubProfile,
+        state: DeviceState,
+        rationale: String
+    ): ResolvedState {
+        val defaultResolved = resolve(state)
+        return ResolvedState(
+            activeProfile = profile,
+            rationale = rationale.ifBlank { defaultResolved.rationale },
+            recommendedActions = defaultResolved.recommendedActions
+        )
+    }
 }

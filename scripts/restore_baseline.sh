@@ -91,20 +91,54 @@ for k, v in settings.items():
         print(f"[VERIFY SUCCESS] secure {k} == {readback}")
 
 # B. Standby Buckets
+code_to_bucket = {
+    "5": "exempted",
+    "10": "active",
+    "20": "working_set",
+    "30": "frequent",
+    "40": "rare",
+    "45": "restricted"
+}
+
 buckets = data.get('standbyBuckets', {})
 for pkg, bucket in buckets.items():
     print(f"[RESTORE] standby-bucket {pkg} -> {bucket}")
     run_adb(["shell", "am", "set-standby-bucket", pkg, str(bucket)])
-    readback = run_adb(["shell", "am", "get-standby-bucket", pkg])
-    print(f"[VERIFY] standby-bucket {pkg} is now bucket {readback}")
+    readback_code = run_adb(["shell", "am", "get-standby-bucket", pkg])
+    readback_bucket = code_to_bucket.get(readback_code, readback_code)
+    if readback_bucket != str(bucket) and readback_code != str(bucket):
+        print(f"[VERIFY FAILURE] standby-bucket {pkg} expected {bucket}, got {readback_bucket} ({readback_code})")
+        errors += 1
+    else:
+        print(f"[VERIFY SUCCESS] standby-bucket {pkg} == {readback_bucket}")
 
 # C. AppOps
 appops = data.get('appOps', {})
 for pkg, mode in appops.items():
     print(f"[RESTORE] AppOps {pkg} -> {mode}")
     run_adb(["shell", "cmd", "appops", "set", pkg, "RUN_ANY_IN_BACKGROUND", str(mode)])
-    readback = run_adb(["shell", "cmd", "appops", "get", pkg, "RUN_ANY_IN_BACKGROUND"])
-    print(f"[VERIFY] AppOps {pkg} is now {readback}")
+    raw_ops = run_adb(["shell", "cmd", "appops", "get", pkg, "RUN_ANY_IN_BACKGROUND"]).lower()
+    
+    if "no operations" in raw_ops or "default" in raw_ops:
+        actual_mode = "default"
+    elif "allow" in raw_ops:
+        actual_mode = "allow"
+    elif "ignore" in raw_ops:
+        actual_mode = "ignore"
+    elif "deny" in raw_ops:
+        actual_mode = "deny"
+    elif "errored" in raw_ops:
+        actual_mode = "errored"
+    elif "foreground" in raw_ops:
+        actual_mode = "foreground"
+    else:
+        actual_mode = raw_ops.strip()
+
+    if actual_mode != str(mode).lower():
+        print(f"[VERIFY FAILURE] AppOps {pkg} expected {mode}, got {actual_mode}")
+        errors += 1
+    else:
+        print(f"[VERIFY SUCCESS] AppOps {pkg} == {actual_mode}")
 
 if errors > 0:
     print(f"[FATAL ERROR] {errors} restoration verification(s) failed!")

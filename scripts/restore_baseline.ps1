@@ -74,14 +74,30 @@ if ($baselineJson.settings.secure) {
 }
 
 # 6. Restore Standby Buckets
+$bucketCodeMap = @{
+    "5" = "exempted"
+    "10" = "active"
+    "20" = "working_set"
+    "30" = "frequent"
+    "40" = "rare"
+    "45" = "restricted"
+}
+
 if ($baselineJson.standbyBuckets) {
     $baselineJson.standbyBuckets.psobject.properties | ForEach-Object {
         $pkg = $_.Name
         $bucket = $_.Value
         Write-Host "[RESTORE] Standby Bucket $pkg -> $bucket" -ForegroundColor Yellow
         & $adbCmd -s $DeviceSerial shell am set-standby-bucket $pkg $bucket
-        $verify = (& $adbCmd -s $DeviceSerial shell am get-standby-bucket $pkg).Trim()
-        Write-Host "[VERIFY] Standby Bucket $pkg is now $verify" -ForegroundColor Green
+        $rawCode = (& $adbCmd -s $DeviceSerial shell am get-standby-bucket $pkg).Trim()
+        $mappedBucket = if ($bucketCodeMap.ContainsKey($rawCode)) { $bucketCodeMap[$rawCode] } else { $rawCode }
+        
+        if ($mappedBucket -eq [string]$bucket -or $rawCode -eq [string]$bucket) {
+            Write-Host "[VERIFY SUCCESS] Standby Bucket $pkg == $mappedBucket ($rawCode)" -ForegroundColor Green
+        } else {
+            Write-Host "[VERIFY FAILURE] Standby Bucket $pkg expected $bucket, got $mappedBucket ($rawCode)" -ForegroundColor Red
+            $hasErrors = $true
+        }
     }
 }
 
@@ -92,8 +108,30 @@ if ($baselineJson.appOps) {
         $mode = $_.Value
         Write-Host "[RESTORE] AppOps $pkg -> $mode" -ForegroundColor Yellow
         & $adbCmd -s $DeviceSerial shell cmd appops set $pkg RUN_ANY_IN_BACKGROUND $mode
-        $verify = (& $adbCmd -s $DeviceSerial shell cmd appops get $pkg RUN_ANY_IN_BACKGROUND).Trim()
-        Write-Host "[VERIFY] AppOps $pkg is now $verify" -ForegroundColor Green
+        $rawOps = (& $adbCmd -s $DeviceSerial shell cmd appops get $pkg RUN_ANY_IN_BACKGROUND).Trim().ToLower()
+        
+        $actualMode = if ($rawOps -match "no operations" -or $rawOps -match "default") {
+            "default"
+        } elseif ($rawOps -match "allow") {
+            "allow"
+        } elseif ($rawOps -match "ignore") {
+            "ignore"
+        } elseif ($rawOps -match "deny") {
+            "deny"
+        } elseif ($rawOps -match "errored") {
+            "errored"
+        } elseif ($rawOps -match "foreground") {
+            "foreground"
+        } else {
+            $rawOps
+        }
+
+        if ($actualMode -eq [string]$mode.ToLower()) {
+            Write-Host "[VERIFY SUCCESS] AppOps $pkg == $actualMode" -ForegroundColor Green
+        } else {
+            Write-Host "[VERIFY FAILURE] AppOps $pkg expected $mode, got $actualMode" -ForegroundColor Red
+            $hasErrors = $true
+        }
     }
 }
 

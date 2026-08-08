@@ -9,6 +9,7 @@
     <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
 
     <application
+        android:name=".SmartHubApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="Smart Hub"
@@ -18,7 +19,6 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="Smart Hub"
             android:theme="@android:style/Theme.Material.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

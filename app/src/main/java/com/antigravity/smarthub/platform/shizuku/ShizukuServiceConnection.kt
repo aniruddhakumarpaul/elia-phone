@@ -17,6 +17,9 @@ class ShizukuServiceConnection : ServiceConnection, IBinder.DeathRecipient {
     var isConnected: Boolean = false
         private set
 
+    val isBound: Boolean
+        get() = isConnected && userService != null
+
     private val userServiceArgs = Shizuku.UserServiceArgs(
         ComponentName("com.antigravity.smarthub", SmartHubUserService::class.java.name)
     )
