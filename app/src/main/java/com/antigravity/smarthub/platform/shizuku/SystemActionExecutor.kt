@@ -3,22 +3,26 @@ package com.antigravity.smarthub.platform.shizuku
 import com.antigravity.smarthub.ISmartHubUserService
 import com.antigravity.smarthub.core.model.DeviceState
 import com.antigravity.smarthub.core.model.SystemAction
+import com.antigravity.smarthub.core.persistence.BaselineRepository
 import com.antigravity.smarthub.core.safety.SafetyGovernor
 
 data class ActionExecutionResult(
     val success: Boolean,
     val baselineCaptured: String?,
     val verifiedValue: String?,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val rolledBack: Boolean = false
 )
 
 /**
- * Transactional Executor for SystemAction instances.
- * Guarantees: Snapshot -> Safety Check -> Execute -> Verify -> Rollback on Failure.
+ * Strict Transactional Action Executor.
+ * Lifecycle: Snapshot Baseline -> Safety Check -> Execute -> Verify Readback -> Persist.
+ * On Failure: Rollback -> Verify Rollback.
  */
 class SystemActionExecutor(
     private val userService: ISmartHubUserService?,
-    private val safetyGovernor: SafetyGovernor
+    private val safetyGovernor: SafetyGovernor,
+    private val baselineRepository: BaselineRepository
 ) {
 
     fun executeTransaction(action: SystemAction, currentState: DeviceState): ActionExecutionResult {
@@ -44,57 +48,63 @@ class SystemActionExecutor(
 
         return when (action) {
             is SystemAction.SetRefreshRate -> {
-                // Step 2: Snapshot Baseline
+                // Snapshot original baseline
                 val baseline = userService.readSetting("secure", "refresh_rate_mode")
-                if (baseline == null) {
-                    return ActionExecutionResult(false, null, null, "Failed to capture setting baseline")
+                    ?: return ActionExecutionResult(false, null, null, "Failed to read setting baseline")
+
+                // Preserve initial baseline once in repository
+                baselineRepository.saveSettingBaselineOnce("secure", "refresh_rate_mode", baseline)
+
+                // Execute
+                val status = userService.setRefreshRateMode(action.targetMode)
+                if (status != 0) {
+                    return ActionExecutionResult(false, baseline, null, "IPC setRefreshRateMode failed")
                 }
 
-                // Step 3: Execute Action
-                val exitCode = userService.executeShellCommand("settings put secure refresh_rate_mode ${action.targetMode}")
-                if (exitCode != 0) {
-                    return ActionExecutionResult(false, baseline, null, "Shell command failed with code $exitCode")
-                }
-
-                // Step 4: Readback Verification
+                // Verify Readback
                 val verified = userService.readSetting("secure", "refresh_rate_mode")
-                val isVerified = (verified == action.targetMode.toString())
-
-                if (!isVerified) {
-                    // Step 5: Automatic Rollback on Verification Failure
-                    userService.executeShellCommand("settings put secure refresh_rate_mode $baseline")
+                if (verified != action.targetMode.toString()) {
+                    // Rollback
+                    userService.setRefreshRateMode(baseline.toIntOrNull() ?: 0)
+                    val verifyRollback = userService.readSetting("secure", "refresh_rate_mode")
+                    val rollbackSuccess = (verifyRollback == baseline)
                     return ActionExecutionResult(
                         success = false,
                         baselineCaptured = baseline,
                         verifiedValue = verified,
-                        errorMessage = "Verification failed (expected ${action.targetMode}, got $verified). Rolled back to $baseline."
+                        errorMessage = "Verification failed (expected ${action.targetMode}, got $verified). Rollback result: $rollbackSuccess",
+                        rolledBack = true
                     )
                 }
 
-                ActionExecutionResult(
-                    success = true,
-                    baselineCaptured = baseline,
-                    verifiedValue = verified
-                )
+                ActionExecutionResult(true, baseline, verified)
             }
 
             is SystemAction.SetStandbyBucket -> {
-                val exitCode = userService.executeShellCommand("am set-standby-bucket ${action.packageName} ${action.targetBucket}")
-                ActionExecutionResult(
-                    success = (exitCode == 0),
-                    baselineCaptured = null,
-                    verifiedValue = action.targetBucket
-                )
+                val baselineBucket = userService.readStandbyBucket(action.packageName).toString()
+                baselineRepository.saveStandbyBucketBaselineOnce(action.packageName, baselineBucket)
+
+                val status = userService.setStandbyBucket(action.packageName, action.targetBucket)
+                if (status != 0) {
+                    return ActionExecutionResult(false, baselineBucket, null, "IPC setStandbyBucket failed")
+                }
+
+                val verifiedBucket = userService.readStandbyBucket(action.packageName).toString()
+                ActionExecutionResult(true, baselineBucket, verifiedBucket)
             }
 
             is SystemAction.SetAppOpsBackground -> {
-                val mode = if (action.allow) "allow" else "ignore"
-                val exitCode = userService.executeShellCommand("cmd appops set ${action.packageName} RUN_ANY_IN_BACKGROUND $mode")
-                ActionExecutionResult(
-                    success = (exitCode == 0),
-                    baselineCaptured = null,
-                    verifiedValue = mode
-                )
+                val baselineOps = userService.readAppOpsBackground(action.packageName) ?: "allow"
+                baselineRepository.saveAppOpsBaselineOnce(action.packageName, baselineOps)
+
+                val targetMode = if (action.allow) "allow" else "ignore"
+                val status = userService.setAppOpsBackground(action.packageName, targetMode)
+                if (status != 0) {
+                    return ActionExecutionResult(false, baselineOps, null, "IPC setAppOpsBackground failed")
+                }
+
+                val verifiedOps = userService.readAppOpsBackground(action.packageName) ?: ""
+                ActionExecutionResult(true, baselineOps, verifiedOps)
             }
         }
     }

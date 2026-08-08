@@ -4,7 +4,6 @@ import com.antigravity.smarthub.core.model.DeviceState
 import com.antigravity.smarthub.core.model.SmartHubProfile
 import com.antigravity.smarthub.core.model.SystemAction
 import com.antigravity.smarthub.core.model.ThermalStatusLevel
-import java.util.Calendar
 
 data class ExtendedDeviceState(
     val baseState: DeviceState,
@@ -19,7 +18,10 @@ class StateMachineEngine {
     var currentProfile: SmartHubProfile = SmartHubProfile.P5_DAILY_ADAPTIVE
         private set
 
-    var lastStateChangeTimeMs: Long = System.currentTimeMillis()
+    var candidateProfile: SmartHubProfile? = null
+        private set
+
+    var candidateSinceMs: Long = 0L
         private set
 
     private val gamingPackages = setOf(
@@ -34,27 +36,37 @@ class StateMachineEngine {
 
     fun updateState(state: ExtendedDeviceState, currentTimeMs: Long = System.currentTimeMillis()): ResolvedState {
         val base = state.baseState
-        val targetProfile = determineTargetProfile(state)
+        val targetCandidate = determineTargetProfile(state)
 
-        // Hysteresis Rule 1: Immediate escalation for P0_THERMAL_EMERGENCY
-        if (targetProfile == SmartHubProfile.P0_THERMAL_EMERGENCY) {
-            currentProfile = targetProfile
-            lastStateChangeTimeMs = currentTimeMs
+        // Rule 1: Immediate escalation for P0_THERMAL_EMERGENCY
+        if (targetCandidate == SmartHubProfile.P0_THERMAL_EMERGENCY) {
+            currentProfile = targetCandidate
+            candidateProfile = null
+            candidateSinceMs = 0L
             return buildResolvedState(currentProfile, base, state)
         }
 
-        // Hysteresis Rule 2: Debounce state exit (minimum dwell time 3000ms for games)
-        val timeInCurrentProfileMs = currentTimeMs - lastStateChangeTimeMs
-        if (currentProfile == SmartHubProfile.P3_GAMING_HIGH_LOAD && targetProfile != SmartHubProfile.P3_GAMING_HIGH_LOAD) {
-            if (timeInCurrentProfileMs < 3000L) {
-                // Hold gaming profile during transient notification shade pull-downs
-                return buildResolvedState(currentProfile, base, state)
-            }
-        }
+        // Rule 2: Candidate Debouncing Hysteresis
+        if (targetCandidate != currentProfile) {
+            if (candidateProfile != targetCandidate) {
+                // New candidate state detected
+                candidateProfile = targetCandidate
+                candidateSinceMs = currentTimeMs
+            } else {
+                // Candidate state persists. Check debounce threshold (e.g. 3000ms debounce for leaving Gaming profile)
+                val candidateAgeMs = currentTimeMs - candidateSinceMs
+                val requiredDwellMs = if (currentProfile == SmartHubProfile.P3_GAMING_HIGH_LOAD) 3000L else 1000L
 
-        if (currentProfile != targetProfile) {
-            currentProfile = targetProfile
-            lastStateChangeTimeMs = currentTimeMs
+                if (candidateAgeMs >= requiredDwellMs) {
+                    currentProfile = targetCandidate
+                    candidateProfile = null
+                    candidateSinceMs = 0L
+                }
+            }
+        } else {
+            // Target matches current profile - clear candidate
+            candidateProfile = null
+            candidateSinceMs = 0L
         }
 
         return buildResolvedState(currentProfile, base, state)
@@ -93,7 +105,6 @@ class StateMachineEngine {
         }
 
         // P6: Overnight Deep Idle Condition
-        // Strictly requires: Screen OFF AND (23:00 - 06:00) AND no Media AND no Navigation AND Idle > 15 mins (900,000 ms)
         val isOvernightHours = state.currentHourOfDay >= 23 || state.currentHourOfDay < 6
         if (!base.isScreenOn && isOvernightHours && !state.isMediaPlaying && !state.isNavigationActive && state.screenOffDurationMs >= 900_000L) {
             return SmartHubProfile.P6_OVERNIGHT_DEEP_IDLE

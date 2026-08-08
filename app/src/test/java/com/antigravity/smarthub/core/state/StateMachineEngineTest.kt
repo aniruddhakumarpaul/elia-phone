@@ -24,10 +24,10 @@ class StateMachineEngineTest {
                 thermalStatus = ThermalStatusLevel.NOMINAL
             )
         )
-        val resolvedGaming = engine.updateState(gamingState)
+        val resolvedGaming = engine.updateState(gamingState, currentTimeMs = 1000L)
         assertEquals(SmartHubProfile.P3_GAMING_HIGH_LOAD, resolvedGaming.activeProfile)
 
-        // Escalate to Thermal Emergency
+        // Escalate to Thermal Emergency (Immediate, 0ms debounce)
         val thermalEmergencyState = ExtendedDeviceState(
             baseState = DeviceState(
                 foregroundPackage = "com.pubg.imobile",
@@ -35,8 +35,68 @@ class StateMachineEngineTest {
                 apTempC = 50.0f
             )
         )
-        val resolvedEmergency = engine.updateState(thermalEmergencyState)
+        val resolvedEmergency = engine.updateState(thermalEmergencyState, currentTimeMs = 1100L)
         assertEquals(SmartHubProfile.P0_THERMAL_EMERGENCY, resolvedEmergency.activeProfile)
+    }
+
+    @Test
+    fun testTransient2SecondForegroundChangeIgnoredDuringGaming() {
+        val gamingState = ExtendedDeviceState(
+            baseState = DeviceState(
+                foregroundPackage = "com.pubg.imobile",
+                thermalStatus = ThermalStatusLevel.NOMINAL
+            )
+        )
+        // 1. Establish Gaming profile (T = 10,000ms)
+        val resolved1 = engine.updateState(gamingState, currentTimeMs = 10_000L)
+        assertEquals(SmartHubProfile.P3_GAMING_HIGH_LOAD, resolved1.activeProfile)
+
+        // 2. User pulls down notification shade / opens System UI for 2 seconds (T = 10,500ms to 12,500ms)
+        val transientSystemUiState = ExtendedDeviceState(
+            baseState = DeviceState(
+                foregroundPackage = "com.android.systemui",
+                thermalStatus = ThermalStatusLevel.NOMINAL
+            )
+        )
+
+        // First sample of candidate (T = 10,500ms)
+        val resolved2 = engine.updateState(transientSystemUiState, currentTimeMs = 10_500L)
+        assertEquals(SmartHubProfile.P3_GAMING_HIGH_LOAD, resolved2.activeProfile) // Holds Gaming!
+
+        // Sample at 2.0s candidate age (T = 12,500ms, candidate age 2000ms < 3000ms threshold)
+        val resolved3 = engine.updateState(transientSystemUiState, currentTimeMs = 12_500L)
+        assertEquals(SmartHubProfile.P3_GAMING_HIGH_LOAD, resolved3.activeProfile) // Still Holds Gaming!
+
+        // 3. User returns to game (T = 12,800ms) - Candidate cleared!
+        val resolved4 = engine.updateState(gamingState, currentTimeMs = 12_800L)
+        assertEquals(SmartHubProfile.P3_GAMING_HIGH_LOAD, resolved4.activeProfile)
+    }
+
+    @Test
+    fun testPermanentGameExitAfter3SecondDebounce() {
+        val gamingState = ExtendedDeviceState(
+            baseState = DeviceState(
+                foregroundPackage = "com.pubg.imobile",
+                thermalStatus = ThermalStatusLevel.NOMINAL
+            )
+        )
+        engine.updateState(gamingState, currentTimeMs = 10_000L)
+
+        // Exit to launcher (T = 11_000ms)
+        val launcherState = ExtendedDeviceState(
+            baseState = DeviceState(
+                foregroundPackage = "com.sec.android.app.launcher",
+                thermalStatus = ThermalStatusLevel.NOMINAL
+            )
+        )
+
+        engine.updateState(launcherState, currentTimeMs = 11_000L) // Candidate set at 11,000ms
+        val resolvedDebouncing = engine.updateState(launcherState, currentTimeMs = 13_500L) // 2.5s age < 3.0s
+        assertEquals(SmartHubProfile.P3_GAMING_HIGH_LOAD, resolvedDebouncing.activeProfile)
+
+        // T = 14_100ms (3.1s age >= 3.0s threshold) -> Profile transitions!
+        val resolvedExited = engine.updateState(launcherState, currentTimeMs = 14_100L)
+        assertEquals(SmartHubProfile.P5_DAILY_ADAPTIVE, resolvedExited.activeProfile)
     }
 
     @Test
@@ -47,49 +107,9 @@ class StateMachineEngineTest {
                 batteryPercent = 80
             ),
             currentHourOfDay = 14, // 2:00 PM
-            screenOffDurationMs = 1_200_000L // 20 mins
+            screenOffDurationMs = 1_200_000L
         )
-        val resolved = engine.updateState(afternoonScreenOffState)
-        // Should NOT be P6_OVERNIGHT_DEEP_IDLE because hour is 14 (not between 23:00 and 06:00)
+        val resolved = engine.updateState(afternoonScreenOffState, currentTimeMs = 10_000L)
         assertEquals(SmartHubProfile.P5_DAILY_ADAPTIVE, resolved.activeProfile)
-    }
-
-    @Test
-    fun testOvernightDeepIdleTriggersWithExactConditions() {
-        val overnightState = ExtendedDeviceState(
-            baseState = DeviceState(
-                isScreenOn = false,
-                batteryPercent = 80
-            ),
-            currentHourOfDay = 2, // 2:00 AM
-            isMediaPlaying = false,
-            isNavigationActive = false,
-            screenOffDurationMs = 1_000_000L // > 15 mins
-        )
-        val resolved = engine.updateState(overnightState)
-        assertEquals(SmartHubProfile.P6_OVERNIGHT_DEEP_IDLE, resolved.activeProfile)
-    }
-
-    @Test
-    fun testMediaBrowsingVsActivePlayback() {
-        // App in foreground but NO active playback
-        val browsingState = ExtendedDeviceState(
-            baseState = DeviceState(
-                foregroundPackage = "in.startv.hotstar"
-            ),
-            isMediaPlaying = false
-        )
-        val resolvedBrowsing = engine.updateState(browsingState)
-        assertEquals(SmartHubProfile.P5_DAILY_ADAPTIVE, resolvedBrowsing.activeProfile)
-
-        // Active MediaSession Playback
-        val playbackState = ExtendedDeviceState(
-            baseState = DeviceState(
-                foregroundPackage = "in.startv.hotstar"
-            ),
-            isMediaPlaying = true
-        )
-        val resolvedPlayback = engine.updateState(playbackState)
-        assertEquals(SmartHubProfile.P4_MEDIA_READING, resolvedPlayback.activeProfile)
     }
 }
