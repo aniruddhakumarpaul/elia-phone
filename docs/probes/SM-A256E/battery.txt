@@ -1,0 +1,11 @@
+# Battery Telemetry Probe for SM-A256E
+Current Level: 55%
+Status: 2 (Charging)
+Health: 2 (Good)
+Voltage: 4078 mV
+Current Avg: 2133 mA
+Technology: Li-ion
+Temperature: 36.3°C
+Max Saved Battery Temp: 838 (83.8°C historical ceiling)
+Max Saved Current: 5335 mA
+Saved BSOH (Battery State of Health): 98%

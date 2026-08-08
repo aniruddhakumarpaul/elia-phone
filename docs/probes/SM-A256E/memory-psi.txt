@@ -1,0 +1,11 @@
+# Pressure Stall Information (PSI) Probe for SM-A256E
+/proc/pressure/memory:
+some avg10=2.80 avg60=3.58 avg300=1.31 total=56374634
+full avg10=1.10 avg60=1.94 avg300=0.71 total=31089226
+
+/proc/pressure/cpu:
+some avg10=43.28 avg60=25.30 avg300=11.70 total=276627262
+
+/proc/pressure/io:
+some avg10=3.57 avg60=5.05 avg300=2.09 total=77681956
+full avg10=0.59 avg60=1.30 avg300=0.65 total=31321486

@@ -1,0 +1,4 @@
+# ZRAM & Swap Probe for SM-A256E
+ZRAM Device: /dev/block/zram0
+Disksize: 8589934592 (8.0 GB)
+Compression Algorithm: lzo [lzo-rle] lz4 zstd

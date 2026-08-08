@@ -1,0 +1,12 @@
+# Display & Refresh Rate Settings Probe for SM-A256E
+Resolution: 1080 x 2340 @ 450 DPI
+Supported Modes:
+  id=1, width=1080, height=2340, fps=120.00001, vsync=120.00001
+  id=2, width=1080, height=2340, fps=60.0, vsync=60.0
+
+Samsung Refresh Rate Setting Location:
+Table: secure
+Key: refresh_rate_mode
+Values:
+  0 = Adaptive Motion Smoothness (120 Hz)
+  1 = Standard Motion Smoothness (60 Hz)

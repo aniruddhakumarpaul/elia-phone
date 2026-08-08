@@ -1,0 +1,11 @@
+# Sanitized Build Properties for Samsung Galaxy A25 5G (SM-A256E)
+[ro.product.model]: [SM-A256E]
+[ro.product.brand]: [samsung]
+[ro.product.device]: [a25x]
+[ro.product.board]: [s5e8825]
+[ro.board.platform]: [s5e8825]
+[ro.hardware]: [s5e8825]
+[ro.build.version.release]: [16]
+[ro.build.version.sdk]: [36]
+[ro.build.display.id]: [UP1A.231005.007.A256EXXU7CXG1]
+[ro.serialno]: [<SERIAL_REDACTED>]

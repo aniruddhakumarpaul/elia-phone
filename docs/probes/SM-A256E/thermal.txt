@@ -1,0 +1,11 @@
+# Thermal HAL 2.0 Probe Output for SM-A256E
+HAL Ready: true
+ThermalHAL 2.0 connected: yes
+
+Sensors & Temperatures:
+  AP (SoC): 44.6°C (mStatus=0)
+  BAT (Battery): 37.3°C (mStatus=0)
+  MAINBATRAW: 37.3°C (mStatus=0)
+  SKIN (Outer body): 38.5°C (mStatus=1)
+  USB (Port): 37.8°C (mStatus=0)
+  PA (Power Amplifier): 38.6°C (mStatus=0)

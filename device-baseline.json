@@ -1,0 +1,13 @@
+{
+  "timestamp": 1723142000,
+  "deviceFingerprint": "samsung/a25xdins/a25x:16/UP1A.231005.007.A256EXXU7CXG1",
+  "model": "SM-A256E",
+  "settings": {
+    "secure": {
+      "refresh_rate_mode": "0"
+    }
+  },
+  "standbyBuckets": {
+    "com.sec.android.app.launcher": "active"
+  }
+}

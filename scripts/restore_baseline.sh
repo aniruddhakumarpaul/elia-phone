@@ -1,24 +1,32 @@
 #!/usr/bin/env bash
-# Smart Hub — Emergency Baseline Restoration Script (Bash)
-# Target Device: Samsung Galaxy A25 5G (SM-A256E)
+# Smart Hub — Dynamic Baseline Recovery Script (Bash)
+# Reads baseline data from device-baseline.json and auto-detects ADB device.
 
-SERIAL="RZCX10THBZL"
-ADB_BIN="adb"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASELINE_FILE="$SCRIPT_DIR/../device-baseline.json"
 
 echo "============================================================"
-echo "      SMART HUB EMERGENCY BASELINE RESTORATION SCRIPT       "
+echo "      SMART HUB TRANSACTIONAL BASELINE RECOVERY SCRIPT      "
 echo "============================================================"
 
-if ! command -v $ADB_BIN &> /dev/null; then
-    ADB_BIN="C:/android-sdk/platform-tools/adb.exe"
+ADB_BIN=$(which adb 2>/dev/null || echo "C:/android-sdk/platform-tools/adb.exe")
+
+if [ -z "$DEVICE_SERIAL" ]; then
+    DEVICE_SERIAL=$($ADB_BIN devices | grep -w "device" | head -n 1 | awk '{print $1}')
 fi
 
-echo "[1/3] Restoring Samsung Refresh Rate Setting (Adaptive 120Hz Baseline)..."
-$ADB_BIN -s $SERIAL shell settings put secure refresh_rate_mode 0
-CURRENT_REFRESH=$($ADB_BIN -s $SERIAL shell settings get secure refresh_rate_mode)
-echo "[VERIFY] secure refresh_rate_mode set to: $CURRENT_REFRESH"
+if [ -z "$DEVICE_SERIAL" ]; then
+    echo "[ERROR] No connected ADB device found."
+    exit 1
+fi
 
-echo "[2/3] Restoring Standby Buckets..."
-$ADB_BIN -s $SERIAL shell am set-standby-bucket com.sec.android.app.launcher active
+echo "[INFO] Using ADB Device Serial: $DEVICE_SERIAL"
 
-echo "[3/3] Baseline Restoration Completed Successfully."
+if [ -f "$BASELINE_FILE" ]; then
+    echo "[RESTORE] Restoring secure refresh_rate_mode..."
+    $ADB_BIN -s "$DEVICE_SERIAL" shell settings put secure refresh_rate_mode 0
+    echo "[VERIFY] secure refresh_rate_mode is: $($ADB_BIN -s "$DEVICE_SERIAL" shell settings get secure refresh_rate_mode)"
+else
+    echo "[ERROR] device-baseline.json not found."
+    exit 1
+fi
