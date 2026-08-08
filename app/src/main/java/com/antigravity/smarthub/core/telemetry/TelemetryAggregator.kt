@@ -1,5 +1,6 @@
 package com.antigravity.smarthub.core.telemetry
 
+import com.antigravity.smarthub.core.model.ThermalStatusLevel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -13,8 +14,13 @@ import kotlinx.coroutines.launch
 class TelemetryAggregator(
     private val cpuObserver: CpuTelemetryObserver = CpuTelemetryObserver(),
     private val memoryObserver: MemoryTelemetryObserver = MemoryTelemetryObserver(),
+    private val zramObserver: ZramTelemetryObserver = ZramTelemetryObserver(),
     private val batteryObserver: BatteryPowerObserver = BatteryPowerObserver(),
     private val thermalObserver: ThermalHeadroomObserver = ThermalHeadroomObserver(),
+    private val displayObserver: DisplayTelemetryObserver = DisplayTelemetryObserver(),
+    private val appContextObserver: AppContextObserver = AppContextObserver(),
+    private val mediaContextObserver: MediaContextObserver = MediaContextObserver(),
+    private val navigationObserver: NavigationContextObserver = NavigationContextObserver(appContextObserver),
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
 ) {
 
@@ -23,13 +29,18 @@ class TelemetryAggregator(
 
     private var samplingJob: Job? = null
 
-    fun startSampling(intervalMs: Long = 1000L) {
+    fun startSampling() {
         if (samplingJob?.isActive == true) return
+
+        batteryObserver.startObserving()
+        thermalObserver.startObserving()
 
         samplingJob = scope.launch {
             while (isActive) {
                 val snapshot = sampleCurrentState()
                 _telemetryStream.value = snapshot
+
+                val intervalMs = calculateAdaptiveSamplingInterval(snapshot)
                 delay(intervalMs)
             }
         }
@@ -38,33 +49,59 @@ class TelemetryAggregator(
     fun stopSampling() {
         samplingJob?.cancel()
         samplingJob = null
+        batteryObserver.stopObserving()
+        thermalObserver.stopObserving()
     }
 
     fun sampleCurrentState(): DeviceTelemetrySnapshot {
-        val cpuFreqs = cpuObserver.readCoreFrequencies()
-        val cpuOnline = cpuObserver.readOnlineStatus()
-        val memStats = memoryObserver.readMemoryStats()
-        val batteryStats = batteryObserver.readBatteryStats()
-        val thermalRisk = thermalObserver.calculateThermalRisk(batteryStats.tempC, batteryStats.tempC + 3.0f)
+        val cpuMetrics = cpuObserver.readCpuMetrics()
+        val memTotal = memoryObserver.readMemTotalKb()
+        val memAvail = memoryObserver.readMemAvailableKb()
+        val memPsi = memoryObserver.readMemoryPsi()
+        val memPressure = memoryObserver.calculateMemoryPressureLevel(memTotal.value, memAvail.value, memPsi.value)
+        val zramMetrics = zramObserver.readZramMetrics()
+        val batteryMetrics = batteryObserver.getBatteryMetrics()
+        val thermalStatus = thermalObserver.getThermalStatus()
+        val thermalHeadroom = thermalObserver.getThermalHeadroom(10)
+        val thermalForecast = thermalObserver.getThermalHeadroom(30)
+        val apTemp = thermalObserver.readMeasuredApTempC()
+        val displayMetrics = displayObserver.getDisplayMetrics()
+        val fgPkg = appContextObserver.getForegroundPackage()
+        val isMedia = mediaContextObserver.isMediaPlaying()
+        val isNav = navigationObserver.isNavigationActive()
 
         return DeviceTelemetrySnapshot(
-            timestampMs = System.currentTimeMillis(),
-            cpuFrequenciesHz = cpuFreqs,
-            cpuOnlineStatus = cpuOnline,
-            memTotalKb = memStats.memTotalKb,
-            memAvailableKb = memStats.memAvailableKb,
-            swapTotalKb = memStats.swapTotalKb,
-            swapFreeKb = memStats.swapFreeKb,
-            zramUsedKb = memStats.zramUsedKb,
-            batteryPercent = batteryStats.percent,
-            batteryTempC = batteryStats.tempC,
-            batteryVoltageMv = batteryStats.voltageMv,
-            batteryCurrentMa = batteryStats.currentMa,
-            isCharging = batteryStats.isCharging,
-            thermalHeadroom = thermalRisk.headroomForecast,
-            thermalStatus = thermalRisk.statusLevel.ordinal,
-            foregroundPackage = "com.sec.android.app.launcher",
-            refreshRateMode = 0
+            capturedAtMs = System.currentTimeMillis(),
+            cpuMetrics = cpuMetrics,
+            memTotalKb = memTotal,
+            memAvailableKb = memAvail,
+            memoryPressure = memPressure,
+            memoryPsi = memPsi,
+            zram = zramMetrics,
+            battery = batteryMetrics,
+            thermalStatus = thermalStatus,
+            thermalHeadroom = thermalHeadroom,
+            thermalForecastHeadroom = thermalForecast,
+            measuredApTempC = apTemp,
+            display = displayMetrics,
+            foregroundPackage = fgPkg,
+            isMediaPlaying = isMedia,
+            isNavigationActive = isNav
         )
+    }
+
+    fun calculateAdaptiveSamplingInterval(snapshot: DeviceTelemetrySnapshot): Long {
+        val thermal = snapshot.thermalStatus.value ?: ThermalStatusLevel.NOMINAL
+        val isScreenOn = snapshot.display.value?.isScreenOn ?: true
+        val fgPkg = snapshot.foregroundPackage.value ?: ""
+
+        val isGaming = fgPkg.contains("pubg") || fgPkg.contains("freefire") || fgPkg.contains("roblox")
+
+        return when {
+            thermal == ThermalStatusLevel.CRITICAL || thermal == ThermalStatusLevel.SEVERE -> 500L
+            isGaming -> 1000L
+            !isScreenOn -> 10000L // 10s overnight / screen-off
+            else -> 2000L // 2s daily adaptive default
+        }
     }
 }

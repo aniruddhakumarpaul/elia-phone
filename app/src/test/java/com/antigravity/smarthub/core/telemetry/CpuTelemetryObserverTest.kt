@@ -1,7 +1,7 @@
 package com.antigravity.smarthub.core.telemetry
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNotNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -23,17 +23,23 @@ class CpuTelemetryObserverTest {
     @Test
     fun testReadCoreFrequenciesFromSysfsMock() {
         val root = tempFolder.newFolder()
+        File(root, "possible").writeText("0-7")
         for (i in 0..7) {
             val cpuDir = File(root, "cpu$i/cpufreq")
             cpuDir.mkdirs()
             File(cpuDir, "scaling_cur_freq").writeText("${2000000 + i * 100000}")
+            File(cpuDir, "scaling_governor").writeText("schedutil")
         }
 
         val observer = CpuTelemetryObserver(root)
-        val freqs = observer.readCoreFrequencies()
+        val result = observer.readCpuMetrics()
 
-        assertEquals(8, freqs.size)
-        assertEquals(2_000_000_000L, freqs[0])
-        assertEquals(2_700_000_000L, freqs[7])
+        assertEquals(TelemetryState.AVAILABLE, result.state)
+        val metrics = result.value
+        assertNotNull(metrics)
+        assertEquals(8, metrics!!.size)
+        assertEquals(2_000_000_000L, metrics[0].frequencyHz)
+        assertEquals(2_700_000_000L, metrics[7].frequencyHz)
+        assertEquals("schedutil", metrics[0].governor)
     }
 }
