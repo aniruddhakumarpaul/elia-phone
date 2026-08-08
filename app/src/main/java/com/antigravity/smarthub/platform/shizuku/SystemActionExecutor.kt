@@ -267,6 +267,27 @@ class SystemActionExecutor(
     }
 
     /** Restore one Smart-Hub-owned key to its exact captured baseline. */
+    fun readCurrentOwnedValue(actionKey: String): String? {
+        val service = serviceProvider() ?: return null
+        return try {
+            when {
+                actionKey == "REFRESH_RATE" -> service.readSetting("secure", "refresh_rate_mode")
+                actionKey.startsWith("STANDBY_BUCKET_") -> {
+                    val packageName = actionKey.removePrefix("STANDBY_BUCKET_")
+                    bucketCodeToString(service.readStandbyBucket(packageName))
+                }
+                actionKey.startsWith("APPOPS_BG_") -> {
+                    val packageName = actionKey.removePrefix("APPOPS_BG_")
+                    parseExactAppOpsMode(service.readAppOpsBackground(packageName) ?: "")
+                }
+                else -> null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Restore one Smart-Hub-owned key to its exact captured baseline. */
     fun restoreOriginal(actionKey: String, currentState: DeviceState): ActionExecutionResult {
         val userService = serviceProvider() ?: return ActionExecutionResult(
             false, null, null, CapabilityResult.UNAVAILABLE, "Shizuku UserService unavailable for restoration"
@@ -278,8 +299,8 @@ class SystemActionExecutor(
                         ?: return ActionExecutionResult(false, null, null, CapabilityResult.UNAVAILABLE, "No refresh baseline captured")
                     val baseline = raw.toIntOrNull()?.takeIf { it == 0 || it == 1 }
                         ?: return ActionExecutionResult(false, raw, null, CapabilityResult.UNAVAILABLE, "Invalid refresh baseline '$raw'; restoration refused")
-                    val veto = safetyGovernor.evaluateAction(SystemAction.SetRefreshRate(baseline), currentState)
-                    if (!veto.isAllowed) return ActionExecutionResult(false, raw, null, CapabilityResult.UNAVAILABLE, "VETOED restoration: ${veto.vetoReason}", false, raw)
+                    // Restoration returns to the user's captured baseline. It is not a new policy
+                    // request and must remain possible even when fresh thermal evidence is absent.
                     restoreRefreshRate(baseline, raw, userService)
                 }
                 actionKey.startsWith("STANDBY_BUCKET_") -> {

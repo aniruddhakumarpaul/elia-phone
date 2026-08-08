@@ -17,6 +17,16 @@ data class ExtendedDeviceState(
 
 class StateMachineEngine {
 
+    private var manualProfileOverride: SmartHubProfile? = null
+
+    @Synchronized
+    fun setManualProfileOverride(profile: SmartHubProfile?) {
+        manualProfileOverride = profile
+    }
+
+    @Synchronized
+    fun getManualProfileOverride(): SmartHubProfile? = manualProfileOverride
+
     var currentProfile: SmartHubProfile = SmartHubProfile.P5_DAILY_ADAPTIVE
         private set
 
@@ -37,11 +47,18 @@ class StateMachineEngine {
     )
 
     fun updateState(state: ExtendedDeviceState, currentTimeMs: Long = System.currentTimeMillis()): SmartHubProfile {
-        val targetCandidate = determineTargetProfile(state)
+        // P0 is always evaluated first and cannot be masked by a manual override.
+        val safetyCandidate = determineTargetProfile(state)
+        val targetCandidate = if (safetyCandidate == SmartHubProfile.P0_THERMAL_EMERGENCY) {
+            safetyCandidate
+        } else {
+            manualProfileOverride ?: safetyCandidate
+        }
 
         if (targetCandidate != currentProfile) {
             val requiredDwellMs = when {
                 targetCandidate == SmartHubProfile.P0_THERMAL_EMERGENCY -> 0L
+                manualProfileOverride != null -> 0L
                 targetCandidate == SmartHubProfile.P3_GAMING_HIGH_LOAD -> 0L
                 currentProfile == SmartHubProfile.P3_GAMING_HIGH_LOAD -> 3000L
                 else -> 1000L

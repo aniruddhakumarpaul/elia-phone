@@ -1,5 +1,12 @@
 package com.antigravity.smarthub.core.state
 
+import android.app.AppOpsManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.os.Process
+import android.provider.Settings
+
 import com.antigravity.smarthub.core.model.ActionHistoryRecord
 import com.antigravity.smarthub.core.model.CapabilityResult
 import com.antigravity.smarthub.core.model.DeviceState
@@ -7,6 +14,9 @@ import com.antigravity.smarthub.core.model.PrivilegeTier
 import com.antigravity.smarthub.core.model.SafetyVetoResult
 import com.antigravity.smarthub.core.model.SmartHubProfile
 import com.antigravity.smarthub.core.model.SystemAction
+import com.antigravity.smarthub.core.persistence.OptimizationSettingsRepository
+import com.antigravity.smarthub.core.safety.AppClassification
+import com.antigravity.smarthub.core.safety.AppClassifier
 import com.antigravity.smarthub.core.safety.SafetyGovernor
 import com.antigravity.smarthub.core.telemetry.DeviceTelemetrySnapshot
 import com.antigravity.smarthub.core.telemetry.TelemetryAggregator
@@ -51,7 +61,16 @@ data class ControllerUiState(
     val shizukuState: ShizukuState = ShizukuState.DISCONNECTED,
     val historyLog: List<ActionHistoryRecord> = emptyList(),
     val readiness: PolicyReadiness = PolicyReadiness(),
-    val lastOptimizationMessage: String = "No privileged action has run"
+    val lastOptimizationMessage: String = "No privileged action has run",
+    val optimizationEnabled: Boolean = false,
+    val automaticMode: Boolean = true,
+    val manualProfileOverride: SmartHubProfile? = null,
+    val startupWarning: String? = null,
+    val restorationPending: Boolean = false,
+    val lastVerificationResult: String = "No verification run",
+    val usageAccessGranted: Boolean = false,
+    val accessibilityOptIn: Boolean = false,
+    val foregroundClassification: AppClassification? = null
 )
 
 class OptimizationController(
@@ -62,6 +81,9 @@ class OptimizationController(
     private val actionExecutor: SystemActionExecutor,
     private val shizukuConnection: ShizukuServiceConnection,
     private val actionLedger: ActionLedger = ActionLedger(),
+    private val settingsRepository: OptimizationSettingsRepository = OptimizationSettingsRepository(),
+    private val appContext: Context? = null,
+    private val appClassifier: AppClassifier = AppClassifier(),
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
 ) {
     private val _uiState = MutableStateFlow(ControllerUiState())
@@ -74,7 +96,109 @@ class OptimizationController(
     private var hasTelemetrySnapshot = false
     private var latestSnapshot: DeviceTelemetrySnapshot? = null
 
+    init {
+        applyPersistedPolicySettings()
+        refreshPermissionState()
+    }
+
+    private fun applyPersistedPolicySettings() {
+        val manual = settingsRepository.getManualProfile()
+        stateMachineEngine.setManualProfileOverride(if (settingsRepository.isAutomaticMode()) null else manual)
+        _uiState.update {
+            it.copy(
+                optimizationEnabled = settingsRepository.isOptimizationEnabled(),
+                automaticMode = settingsRepository.isAutomaticMode(),
+                manualProfileOverride = manual,
+                startupWarning = when {
+                    settingsRepository.isCorrupt() -> "Runtime settings were corrupt; Smart Hub is OFF and will not mutate settings."
+                    actionLedger.persistenceCorrupt -> "Smart Hub found corrupt ownership state; restoration is blocked until reviewed."
+                    else -> null
+                }
+            )
+        }
+    }
+
+    /** Called once by Application, not by an Activity lifecycle callback. */
+    fun initialize() {
+        applyPersistedPolicySettings()
+        if (!actionLedger.persistenceCorrupt &&
+            (settingsRepository.isOptimizationEnabled() || actionLedger.getCurrentlyAppliedActions().isNotEmpty())
+        ) requestRuntimeService()
+    }
+
+    fun onRuntimeServiceStarted() {
+        startMonitoring()
+    }
+
+    fun onRuntimeServiceDestroyed() {
+        if (!settingsRepository.isOptimizationEnabled()) stopMonitoring()
+    }
+
+    fun setOptimizationEnabled(enabled: Boolean) {
+        settingsRepository.setOptimizationEnabled(enabled)
+        _uiState.update { it.copy(optimizationEnabled = enabled) }
+        scope.launch {
+            decisionMutex.withLock {
+                if (enabled) {
+                    requestRuntimeService()
+                } else {
+                    val restored = restoreOwnedActionsLocked(_uiState.value.extendedState)
+                    if (restored) {
+                        _uiState.update { it.copy(restorationPending = false, lastOptimizationMessage = "Original settings restored; optimization is OFF") }
+                        stopMonitoring()
+                        appContext?.stopService(Intent(appContext, com.antigravity.smarthub.platform.runtime.OptimizationRuntimeService::class.java))
+                    } else {
+                        _uiState.update { it.copy(restorationPending = true, startupWarning = "Restoration is pending. Smart Hub remains active until every owned setting is verified.") }
+                    }
+                }
+            }
+        }
+    }
+
+    fun setAutomaticMode(automatic: Boolean) {
+        settingsRepository.setAutomaticMode(automatic)
+        stateMachineEngine.setManualProfileOverride(if (automatic) null else settingsRepository.getManualProfile())
+        _uiState.update { it.copy(automaticMode = automatic, manualProfileOverride = settingsRepository.getManualProfile()) }
+        scope.launch { latestSnapshot?.let { evaluateAndOptimize(snapshotToExtendedDeviceState(it)) } }
+    }
+
+    fun setManualProfile(profile: SmartHubProfile) {
+        settingsRepository.setManualProfile(profile)
+        stateMachineEngine.setManualProfileOverride(profile)
+        _uiState.update { it.copy(automaticMode = false, manualProfileOverride = profile) }
+        scope.launch { latestSnapshot?.let { evaluateAndOptimize(snapshotToExtendedDeviceState(it)) } }
+    }
+
+    fun restoreOriginalSettings() {
+        scope.launch {
+            decisionMutex.withLock {
+                val restored = restoreOwnedActionsLocked(_uiState.value.extendedState)
+                _uiState.update {
+                    it.copy(
+                        restorationPending = !restored,
+                        lastVerificationResult = if (restored) "All owned settings verified at baseline" else "One or more baselines could not be verified"
+                    )
+                }
+            }
+        }
+    }
+
+    private fun requestRuntimeService() {
+        val context = appContext ?: return
+        try {
+            val intent = Intent(context, com.antigravity.smarthub.platform.runtime.OptimizationRuntimeService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) context.startForegroundService(intent)
+            else context.startService(intent)
+        } catch (e: Exception) {
+            _uiState.update { it.copy(startupWarning = "Foreground runtime could not start: ${e.message}") }
+        }
+    }
+
     fun start() {
+        startMonitoring()
+    }
+
+    private fun startMonitoring() {
         if (observationJob?.isActive == true) return
 
         shizukuConnection.bind()
@@ -100,7 +224,11 @@ class OptimizationController(
                     hasTelemetrySnapshot = hasTelemetrySnapshot || snapshotHasMeaningfulTelemetry(snapshot)
                     val extState = snapshotToExtendedDeviceState(snapshot)
                     _uiState.update {
-                        it.copy(deviceState = extState.baseState, extendedState = extState)
+                        it.copy(
+                            deviceState = extState.baseState,
+                            extendedState = extState,
+                            foregroundClassification = extState.baseState.foregroundPackage.value?.let(appClassifier::classifyApp)
+                        )
                     }
                     evaluateAndOptimize(extState)
                 }
@@ -109,6 +237,10 @@ class OptimizationController(
     }
 
     fun stop() {
+        stopMonitoring()
+    }
+
+    private fun stopMonitoring() {
         observationJob?.cancel()
         observationJob = null
         telemetryAggregator.stopSampling()
@@ -134,6 +266,23 @@ class OptimizationController(
                 resolvedState = resolved,
                 readiness = readiness
             )
+        }
+
+        refreshPermissionState()
+
+        if (actionLedger.persistenceCorrupt) {
+            _uiState.update { it.copy(startupWarning = "Corrupt ownership state detected; no privileged mutation is allowed.") }
+            return@withLock
+        }
+
+        if (actionLedger.getCurrentlyAppliedActions().isNotEmpty() && !startupReconciled) {
+            reconcilePersistedOwnershipLocked(extState)
+            startupReconciled = true
+        }
+
+        if (!settingsRepository.isOptimizationEnabled()) {
+            restoreOwnedActionsLocked(extState)
+            return@withLock
         }
 
         // A connection-state event can arrive before the first trustworthy sample.
@@ -202,7 +351,8 @@ class OptimizationController(
                 result,
                 restored = false
             )
-            if (result.success) actionLedger.recordAppliedAction(action)
+            _uiState.update { it.copy(lastVerificationResult = result.verifiedValue ?: result.errorMessage ?: "Unavailable") }
+            if (result.success) actionLedger.recordAppliedAction(action, result.verifiedValue, result.capabilityResult)
             else if (result.capabilityResult == CapabilityResult.IGNORED_BY_OEM ||
                 result.errorMessage?.contains("effective display", ignoreCase = true) == true
             ) {
@@ -210,6 +360,57 @@ class OptimizationController(
             }
         }
         _uiState.update { it.copy(lastOptimizationMessage = "Reconciled desired state for ${profile.displayName}") }
+    }
+
+    private var startupReconciled = false
+
+    private suspend fun reconcilePersistedOwnershipLocked(state: ExtendedDeviceState) {
+        val owned = actionLedger.getCurrentlyAppliedActions()
+        var allVerified = true
+        for ((key, action) in owned) {
+            val current = actionExecutor.readCurrentOwnedValue(key)
+            val expected = expectedValue(action)
+            if (current == expected) {
+                actionLedger.recordVerification(key, current)
+            } else {
+                allVerified = false
+                val result = actionExecutor.restoreOriginal(key, state.baseState)
+                if (result.success) actionLedger.recordRestoredAction(key)
+                else _uiState.update { it.copy(restorationPending = true, startupWarning = "Smart Hub detected settings owned by a previous interrupted session; restoration is pending.") }
+            }
+        }
+        if (allVerified && owned.isNotEmpty()) {
+            _uiState.update { it.copy(startupWarning = "Previous session ownership reconciled and verified.") }
+        }
+    }
+
+    private suspend fun restoreOwnedActionsLocked(state: ExtendedDeviceState): Boolean {
+        var allRestored = true
+        for ((key, action) in actionLedger.getCurrentlyAppliedActions()) {
+            if (actionLedger.isCooldownActive(action, bypass = true)) actionLedger.recordAttempt(action)
+            val result = actionExecutor.restoreOriginal(key, state.baseState)
+            recordResult(lastProfile, lastProfile, state, "RESTORE_$key", "Restore original baseline for $key", SafetyVetoResult(true), result, result.success)
+            if (result.success) actionLedger.recordRestoredAction(key)
+            else allRestored = false
+        }
+        return allRestored && actionLedger.getCurrentlyAppliedActions().isEmpty()
+    }
+
+    private fun expectedValue(action: SystemAction): String = when (action) {
+        is SystemAction.SetRefreshRate -> action.targetMode.toString()
+        is SystemAction.SetStandbyBucket -> action.targetBucket
+        is SystemAction.SetAppOpsBackground -> if (action.allow) "allow" else "ignore"
+    }
+
+    private fun refreshPermissionState() {
+        val context = appContext ?: return
+        val usage = try {
+            val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
+            appOps?.noteOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName) == AppOpsManager.MODE_ALLOWED
+        } catch (_: Exception) { false }
+        val component = ComponentName(context, com.antigravity.smarthub.platform.accessibility.SmartHubAccessibilityService::class.java).flattenToString()
+        val enabledServices = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
+        _uiState.update { it.copy(usageAccessGranted = usage, accessibilityOptIn = enabledServices.split(':').contains(component)) }
     }
 
     private fun recordResult(

@@ -13,6 +13,8 @@ import androidx.compose.ui.unit.sp
 import com.antigravity.smarthub.core.model.ActionHistoryRecord
 import com.antigravity.smarthub.core.model.DeviceState
 import com.antigravity.smarthub.core.model.PrivilegeTier
+import com.antigravity.smarthub.core.model.SmartHubProfile
+import com.antigravity.smarthub.core.safety.AppClassification
 import com.antigravity.smarthub.core.state.ResolvedState
 import com.antigravity.smarthub.core.state.PolicyReadiness
 import com.antigravity.smarthub.core.telemetry.TelemetryState
@@ -26,7 +28,23 @@ fun DashboardScreen(
     historyLog: List<ActionHistoryRecord> = emptyList(),
     shizukuState: ShizukuState = ShizukuState.DISCONNECTED,
     readiness: PolicyReadiness = PolicyReadiness(),
-    onRefresh: () -> Unit = {}
+    onRefresh: () -> Unit = {},
+    optimizationEnabled: Boolean = false,
+    automaticMode: Boolean = true,
+    manualProfileOverride: SmartHubProfile? = null,
+    startupWarning: String? = null,
+    restorationPending: Boolean = false,
+    usageAccessGranted: Boolean = false,
+    accessibilityOptIn: Boolean = false,
+    foregroundClassification: AppClassification? = null,
+    lastVerificationResult: String = "No verification run",
+    onOptimizationEnabledChanged: (Boolean) -> Unit = {},
+    onAutomaticModeChanged: (Boolean) -> Unit = {},
+    onManualProfileSelected: (SmartHubProfile) -> Unit = {},
+    onRestoreOriginalSettings: () -> Unit = {},
+    onOpenUsageAccess: () -> Unit = {},
+    onOpenAccessibilitySettings: () -> Unit = {},
+    onOpenShizukuSettings: () -> Unit = {}
 ) {
     Scaffold(
         topBar = {
@@ -74,6 +92,66 @@ fun DashboardScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            item {
+                Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Smart Hub Optimization", fontWeight = FontWeight.Bold)
+                                Text(if (optimizationEnabled) "Foreground safety runtime active" else "OFF — no settings will be mutated", fontSize = 12.sp)
+                            }
+                            Switch(checked = optimizationEnabled, onCheckedChange = onOptimizationEnabledChanged)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Text("Automatic profile selection", modifier = Modifier.weight(1f), fontSize = 13.sp)
+                            Switch(checked = automaticMode, onCheckedChange = onAutomaticModeChanged)
+                        }
+                        if (!automaticMode) {
+                            Text("Manual override", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            SmartHubProfile.values().forEach { profile ->
+                                TextButton(onClick = { onManualProfileSelected(profile) }, modifier = Modifier.fillMaxWidth()) {
+                                    Text(if (manualProfileOverride == profile) "✓ ${profile.displayName}" else profile.displayName)
+                                }
+                            }
+                        }
+                        if (startupWarning != null) {
+                            Text(startupWarning, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                        }
+                        if (restorationPending) {
+                            Text("Restoration pending — runtime remains active for safety.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                        }
+                        Text("Last verification: $lastVerificationResult", fontSize = 12.sp)
+                        Button(onClick = onRestoreOriginalSettings, modifier = Modifier.fillMaxWidth()) {
+                            Text("Restore Original Settings")
+                        }
+                    }
+                }
+            }
+
+            item {
+                Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text("Required access", fontWeight = FontWeight.Bold)
+                        Text("Usage Access: ${if (usageAccessGranted) "Ready" else "Not granted"}", fontSize = 13.sp)
+                        if (!usageAccessGranted) TextButton(onClick = onOpenUsageAccess) { Text("Open Usage Access") }
+                        Text("Accessibility package-only opt-in: ${if (accessibilityOptIn) "Ready" else "Not enabled"}", fontSize = 13.sp)
+                        if (!accessibilityOptIn) TextButton(onClick = onOpenAccessibilitySettings) { Text("Open Accessibility Settings") }
+                        Text("Shizuku: ${shizukuState.name}", fontSize = 13.sp)
+                        if (shizukuState != ShizukuState.CONNECTED) TextButton(onClick = onOpenShizukuSettings) { Text("Open Shizuku") }
+                    }
+                }
+            }
+
+            item {
+                Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text("Protected-app policy", fontWeight = FontWeight.Bold)
+                        Text("Never-touch and protected packages are excluded from automatic restriction.", fontSize = 13.sp)
+                        Text("Current foreground classification: ${foregroundClassification?.name ?: "UNAVAILABLE"}", fontSize = 12.sp)
+                    }
+                }
+            }
+
             // 1. Active Profile Card
             item {
                 Card(
@@ -180,8 +258,9 @@ fun DashboardScreen(
             item {
                 val refMode = deviceState.activeRefreshRateMode.value
                 val refVal = if (deviceState.activeRefreshRateMode.state == TelemetryState.AVAILABLE) {
-                    if (refMode == 0) "120 Hz" else "60 Hz"
-                } else "UNAVAILABLE"
+                    if (refMode == 0) "Adaptive requested" else "60 Hz requested"
+                } else "Requested unavailable"
+                val effective = deviceState.effectiveRefreshRateHz.value?.let { "%.1f Hz".format(it) } ?: "Unavailable"
 
                 val psiVal = if (deviceState.memoryPsiAvg10.state == TelemetryState.AVAILABLE && deviceState.memoryPsiAvg10.value != null) "%.2f".format(deviceState.memoryPsiAvg10.value) else "N/A"
                 val memAvail = if (deviceState.memoryAvailableMb.state == TelemetryState.AVAILABLE) "${deviceState.memoryAvailableMb.value} MB" else "N/A"
@@ -194,7 +273,7 @@ fun DashboardScreen(
                         modifier = Modifier.weight(1f),
                         title = "Refresh Rate",
                         value = refVal,
-                        subtitle = "Mode: ${refMode ?: "N/A"} | Effective: ${deviceState.effectiveRefreshRateHz.value?.let { "%.1f Hz".format(it) } ?: "N/A"}"
+                        subtitle = "Mode: ${refMode ?: "N/A"} | Effective: $effective"
                     )
                     TelemetryCard(
                         modifier = Modifier.weight(1f),

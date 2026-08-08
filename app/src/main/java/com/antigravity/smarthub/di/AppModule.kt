@@ -3,6 +3,7 @@ package com.antigravity.smarthub.di
 import android.content.Context
 import android.os.PowerManager
 import com.antigravity.smarthub.core.persistence.BaselineRepository
+import com.antigravity.smarthub.core.persistence.OptimizationSettingsRepository
 import com.antigravity.smarthub.core.safety.AppClassifier
 import com.antigravity.smarthub.core.safety.SafetyGovernor
 import com.antigravity.smarthub.core.state.ActionLedger
@@ -33,6 +34,11 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideOptimizationSettingsRepository(@ApplicationContext context: Context): OptimizationSettingsRepository =
+        OptimizationSettingsRepository(java.io.File(context.filesDir, "smart_hub_runtime_settings.properties"))
+
+    @Provides
+    @Singleton
     fun provideAppClassifier(): AppClassifier = AppClassifier()
 
     @Provides
@@ -53,7 +59,8 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideActionLedger(): ActionLedger = ActionLedger()
+    fun provideActionLedger(@ApplicationContext context: Context): ActionLedger =
+        ActionLedger(java.io.File(context.filesDir, "smart_hub_action_ownership.properties"))
 
     @Provides
     @Singleton
@@ -83,7 +90,8 @@ object AppModule {
     @Singleton
     fun provideTelemetryAggregator(
         @ApplicationContext context: Context,
-        displayObserver: DisplayTelemetryObserver
+        displayObserver: DisplayTelemetryObserver,
+        appContextObserver: AppContextObserver
     ): TelemetryAggregator {
         val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         val executor = Executors.newSingleThreadExecutor()
@@ -93,7 +101,7 @@ object AppModule {
         val zramObserver = ZramTelemetryObserver()
         val batteryObserver = BatteryPowerObserver(context)
         val thermalObserver = ThermalHeadroomObserver(pm, executor)
-        val appContextObserver = AppContextObserver(context)
+        appContextObserver.onAccessibilityWindowStateChanged(null)
         val mediaObserver = MediaContextObserver(context)
         val navObserver = NavigationContextObserver(appContextObserver)
 
@@ -119,7 +127,10 @@ object AppModule {
         safetyGovernor: SafetyGovernor,
         systemActionExecutor: SystemActionExecutor,
         shizukuConnection: ShizukuServiceConnection,
-        actionLedger: ActionLedger
+        actionLedger: ActionLedger,
+        settingsRepository: OptimizationSettingsRepository,
+        @ApplicationContext context: Context,
+        appClassifier: AppClassifier
     ): OptimizationController {
         return OptimizationController(
             telemetryAggregator = telemetryAggregator,
@@ -128,7 +139,14 @@ object AppModule {
             safetyGovernor = safetyGovernor,
             actionExecutor = systemActionExecutor,
             shizukuConnection = shizukuConnection,
-            actionLedger = actionLedger
+            actionLedger = actionLedger,
+            settingsRepository = settingsRepository,
+            appContext = context,
+            appClassifier = appClassifier
         )
     }
+
+    @Provides
+    @Singleton
+    fun provideAppContextObserver(@ApplicationContext context: Context): AppContextObserver = AppContextObserver(context)
 }

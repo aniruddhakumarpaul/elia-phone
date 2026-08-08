@@ -17,14 +17,19 @@ class AppContextObserver(
     }
 
     fun getForegroundPackage(): TelemetryValue<String> {
-        // Priority 1: Opt-in AccessibilityService package event
+        // Priority 1: opt-in package-only AccessibilityService event.
+        AccessibilityForegroundContextBus.foregroundPackage.value?.let {
+            return TelemetryValue(it, TelemetryState.AVAILABLE)
+        }
+
+        // Priority 2: legacy in-process event hook retained for tests/callers.
         accessibilityForegroundPackage?.let {
             return TelemetryValue(it, TelemetryState.AVAILABLE)
         }
 
         if (context == null) return TelemetryValue.unavailable()
 
-        // Priority 2: UsageStatsManager fallback
+        // Priority 3: UsageStatsManager fallback
         val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
         if (usm != null) {
             try {
@@ -39,7 +44,7 @@ class AppContextObserver(
             }
         }
 
-        // Priority 3: ActivityManager fallback
+        // Priority 4: ActivityManager fallback
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         if (am != null) {
             try {

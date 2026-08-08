@@ -21,3 +21,9 @@ jobs:
         run: chmod +x gradlew
       - name: Build and Test with Gradle
         run: ./gradlew clean assembleDebug testDebugUnitTest lintDebug --no-daemon
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-hub-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
