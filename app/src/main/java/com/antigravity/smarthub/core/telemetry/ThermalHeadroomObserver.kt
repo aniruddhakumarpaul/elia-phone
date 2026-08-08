@@ -2,18 +2,17 @@ package com.antigravity.smarthub.core.telemetry
 
 import android.os.Build
 import android.os.PowerManager
-import androidx.annotation.RequiresApi
 import com.antigravity.smarthub.core.model.ThermalStatusLevel
 
 data class ThermalRiskState(
-    val statusLevel: ThermalStatusLevel,
-    val headroomForecast: Float, // 0.0 to 1.0 (1.0 = Throttling threshold)
-    val batteryTempC: Float,
-    val apTempC: Float
+    val statusLevel: ThermalStatusLevel = ThermalStatusLevel.NOMINAL,
+    val headroomForecast: Float = 0.0f, // 0.0 to 1.0 (1.0 = Throttling threshold)
+    val batteryTempC: Float = 25.0f,
+    val apTempC: Float = 28.0f
 )
 
 class ThermalHeadroomObserver(
-    private val powerManager: PowerManager?
+    private val powerManager: PowerManager? = null
 ) {
 
     fun calculateThermalRisk(batteryTempC: Float, apTempC: Float): ThermalRiskState {
