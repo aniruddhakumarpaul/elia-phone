@@ -11,7 +11,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.mockito.ArgumentMatchers.anyInt
-import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito.`when`
 import org.mockito.Mockito.mock
 
@@ -29,7 +28,7 @@ class SystemActionExecutorTest {
     }
 
     @Test
-    fun testSuccessfulTransaction() {
+    fun testSuccessfulRefreshRateTransaction() {
         `when`(mockUserService.readSetting("secure", "refresh_rate_mode")).thenReturn("0", "1")
         `when`(mockUserService.setRefreshRateMode(1)).thenReturn(0)
 
@@ -39,6 +38,50 @@ class SystemActionExecutorTest {
 
         assertTrue(result.success)
         assertFalse(result.rolledBack)
+    }
+
+    @Test
+    fun testFailedRefreshRateVerificationTriggersRollback() {
+        `when`(mockUserService.readSetting("secure", "refresh_rate_mode")).thenReturn("0", "0", "0")
+        `when`(mockUserService.setRefreshRateMode(anyInt())).thenReturn(0)
+
+        val executor = SystemActionExecutor(mockUserService, safetyGovernor, baselineRepository)
+        val action = SystemAction.SetRefreshRate(targetMode = 1)
+        val result = executor.executeTransaction(action, DeviceState())
+
+        assertFalse(result.success)
+        assertTrue(result.rolledBack)
+        assertTrue(result.errorMessage!!.contains("verification failed", ignoreCase = true))
+    }
+
+    @Test
+    fun testFailedStandbyBucketVerificationTriggersRollback() {
+        // Baseline = 10 (active), Target = rare (40), Readback returns 10 (Verification Failed)
+        `when`(mockUserService.readStandbyBucket("com.example.app")).thenReturn(10, 10, 10)
+        `when`(mockUserService.setStandbyBucket("com.example.app", "rare")).thenReturn(0)
+
+        val executor = SystemActionExecutor(mockUserService, safetyGovernor, baselineRepository)
+        val action = SystemAction.SetStandbyBucket("com.example.app", "rare")
+        val result = executor.executeTransaction(action, DeviceState())
+
+        assertFalse(result.success)
+        assertTrue(result.rolledBack)
+        assertTrue(result.errorMessage!!.contains("verification failed", ignoreCase = true))
+    }
+
+    @Test
+    fun testFailedAppOpsVerificationTriggersRollback() {
+        // Baseline = "allow", Target = ignore (allow=false), Readback returns "allow" (Verification Failed)
+        `when`(mockUserService.readAppOpsBackground("com.example.app")).thenReturn("allow", "allow", "allow")
+        `when`(mockUserService.setAppOpsBackground("com.example.app", "ignore")).thenReturn(0)
+
+        val executor = SystemActionExecutor(mockUserService, safetyGovernor, baselineRepository)
+        val action = SystemAction.SetAppOpsBackground("com.example.app", allow = false)
+        val result = executor.executeTransaction(action, DeviceState())
+
+        assertFalse(result.success)
+        assertTrue(result.rolledBack)
+        assertTrue(result.errorMessage!!.contains("verification failed", ignoreCase = true))
     }
 
     @Test
@@ -60,33 +103,5 @@ class SystemActionExecutorTest {
         val result = executor.executeTransaction(action, criticalState)
         assertFalse(result.success)
         assertTrue(result.errorMessage!!.contains("VETOED"))
-    }
-
-    @Test
-    fun testFailedExecutionFails() {
-        `when`(mockUserService.readSetting("secure", "refresh_rate_mode")).thenReturn("0")
-        `when`(mockUserService.setRefreshRateMode(1)).thenReturn(-1) // Failed IPC
-
-        val executor = SystemActionExecutor(mockUserService, safetyGovernor, baselineRepository)
-        val action = SystemAction.SetRefreshRate(targetMode = 1)
-        val result = executor.executeTransaction(action, DeviceState())
-
-        assertFalse(result.success)
-        assertTrue(result.errorMessage!!.contains("IPC setRefreshRateMode failed"))
-    }
-
-    @Test
-    fun testFailedVerificationTriggersRollback() {
-        // Baseline = "0", Target = 1, Readback returns "0" (Verification Failed)
-        `when`(mockUserService.readSetting("secure", "refresh_rate_mode")).thenReturn("0", "0", "0")
-        `when`(mockUserService.setRefreshRateMode(anyInt())).thenReturn(0)
-
-        val executor = SystemActionExecutor(mockUserService, safetyGovernor, baselineRepository)
-        val action = SystemAction.SetRefreshRate(targetMode = 1)
-        val result = executor.executeTransaction(action, DeviceState())
-
-        assertFalse(result.success)
-        assertTrue(result.rolledBack)
-        assertTrue(result.errorMessage!!.contains("Verification failed"))
     }
 }

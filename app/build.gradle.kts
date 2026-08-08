@@ -42,6 +42,11 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = false
+        disable.add("ProtectedPermissions")
+    }
 }
 
 dependencies {

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.antigravity.smarthub.core.safety.SafetyGovernorTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-08-08T19:27:16" hostname="A_REGULAR_MF" time="0.055">
+<testsuite name="com.antigravity.smarthub.core.safety.SafetyGovernorTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-08-08T19:33:27" hostname="A_REGULAR_MF" time="0.041">
   <properties/>
-  <testcase name="testVetoesRestrictingWhatsAppBackgroundOps" classname="com.antigravity.smarthub.core.safety.SafetyGovernorTest" time="0.047"/>
-  <testcase name="testVetoesRestrictingProtectedPackageTeams" classname="com.antigravity.smarthub.core.safety.SafetyGovernorTest" time="0.003"/>
-  <testcase name="testVetoesRefreshRateBoostUnderThermalEmergency" classname="com.antigravity.smarthub.core.safety.SafetyGovernorTest" time="0.002"/>
+  <testcase name="testVetoesRestrictingWhatsAppBackgroundOps" classname="com.antigravity.smarthub.core.safety.SafetyGovernorTest" time="0.036"/>
+  <testcase name="testVetoesRestrictingProtectedPackageTeams" classname="com.antigravity.smarthub.core.safety.SafetyGovernorTest" time="0.0"/>
+  <testcase name="testVetoesRefreshRateBoostUnderThermalEmergency" classname="com.antigravity.smarthub.core.safety.SafetyGovernorTest" time="0.003"/>
   <testcase name="testAllowsStandbyBucketForUnprotectedApp" classname="com.antigravity.smarthub.core.safety.SafetyGovernorTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>

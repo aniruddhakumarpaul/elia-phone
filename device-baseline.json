@@ -10,5 +10,8 @@
   },
   "standbyBuckets": {
     "com.sec.android.app.launcher": "active"
+  },
+  "appOps": {
+    "com.whatsapp": "allow"
   }
 }

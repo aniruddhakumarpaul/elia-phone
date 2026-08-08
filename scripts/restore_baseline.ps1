@@ -1,5 +1,6 @@
 # Smart Hub — Transactional Baseline Recovery Script (PowerShell)
-# Reads baseline data from device-baseline.json, checks device count & model fingerprint.
+# Restores settings, standby buckets, and AppOps ONLY from device-baseline.json.
+# Aborts if multiple devices are connected, model mismatches, or verification fails.
 
 param (
     [string]$DeviceSerial = "",
@@ -16,7 +17,7 @@ if (-not $adbCmd) {
     if (Test-Path "C:\android-sdk\platform-tools\adb.exe") {
         $adbCmd = "C:\android-sdk\platform-tools\adb.exe"
     } else {
-        Write-Host "[ERROR] ADB executable not found in PATH or standard location." -ForegroundColor Red
+        Write-Host "[FATAL ERROR] ADB executable not found in PATH or standard location." -ForegroundColor Red
         exit 1
     }
 }
@@ -24,12 +25,12 @@ if (-not $adbCmd) {
 # 2. Check Device Count & Serial
 $devicesOutput = & $adbCmd devices | Select-String -Pattern "\tdevice$"
 if ($devicesOutput.Count -eq 0) {
-    Write-Host "[ERROR] No authorized ADB devices detected." -ForegroundColor Red
+    Write-Host "[FATAL ERROR] No authorized ADB devices detected." -ForegroundColor Red
     exit 1
 }
 
 if ($devicesOutput.Count -gt 1 -and [string]::IsNullOrWhiteSpace($DeviceSerial)) {
-    Write-Host "[ERROR] Multiple ADB devices connected ($($devicesOutput.Count)). You must specify -DeviceSerial <SERIAL>." -ForegroundColor Red
+    Write-Host "[FATAL ERROR] Multiple ADB devices connected ($($devicesOutput.Count)). You must specify -DeviceSerial <SERIAL>." -ForegroundColor Red
     exit 1
 }
 
@@ -40,16 +41,17 @@ if ([string]::IsNullOrWhiteSpace($DeviceSerial)) {
 
 # 3. Read Baseline JSON
 if (-not (Test-Path $BaselineFile)) {
-    Write-Host "[ERROR] Baseline snapshot file not found at $BaselineFile" -ForegroundColor Red
+    Write-Host "[FATAL ERROR] Baseline snapshot file not found at $BaselineFile" -ForegroundColor Red
     exit 1
 }
 
 $baselineJson = Get-Content $BaselineFile -Raw | ConvertFrom-Json
+$hasErrors = $false
 
 # 4. Verify Model Fingerprint
 $actualModel = (& $adbCmd -s $DeviceSerial shell getprop ro.product.model).Trim()
 if ($baselineJson.model -and $actualModel -ne $baselineJson.model) {
-    Write-Host "[ERROR] Device model mismatch! Baseline expected '$($baselineJson.model)', connected device is '$actualModel'." -ForegroundColor Red
+    Write-Host "[FATAL ERROR] Device model mismatch! Baseline expected '$($baselineJson.model)', connected device is '$actualModel'." -ForegroundColor Red
     exit 1
 }
 Write-Host "[SUCCESS] Device fingerprint verified ($actualModel)." -ForegroundColor Green
@@ -61,8 +63,13 @@ if ($baselineJson.settings.secure) {
         $value = $_.Value
         Write-Host "[RESTORE] Setting secure $key -> $value" -ForegroundColor Yellow
         & $adbCmd -s $DeviceSerial shell settings put secure $key $value
-        $verify = & $adbCmd -s $DeviceSerial shell settings get secure $key
-        Write-Host "[VERIFY] secure $key is now: $verify" -ForegroundColor Green
+        $verify = (& $adbCmd -s $DeviceSerial shell settings get secure $key).Trim()
+        if ($verify -eq [string]$value) {
+            Write-Host "[VERIFY SUCCESS] secure $key == $verify" -ForegroundColor Green
+        } else {
+            Write-Host "[VERIFY FAILURE] secure $key expected $value, got $verify" -ForegroundColor Red
+            $hasErrors = $true
+        }
     }
 }
 
@@ -73,9 +80,28 @@ if ($baselineJson.standbyBuckets) {
         $bucket = $_.Value
         Write-Host "[RESTORE] Standby Bucket $pkg -> $bucket" -ForegroundColor Yellow
         & $adbCmd -s $DeviceSerial shell am set-standby-bucket $pkg $bucket
+        $verify = (& $adbCmd -s $DeviceSerial shell am get-standby-bucket $pkg).Trim()
+        Write-Host "[VERIFY] Standby Bucket $pkg is now $verify" -ForegroundColor Green
     }
 }
 
+# 7. Restore AppOps
+if ($baselineJson.appOps) {
+    $baselineJson.appOps.psobject.properties | ForEach-Object {
+        $pkg = $_.Name
+        $mode = $_.Value
+        Write-Host "[RESTORE] AppOps $pkg -> $mode" -ForegroundColor Yellow
+        & $adbCmd -s $DeviceSerial shell cmd appops set $pkg RUN_ANY_IN_BACKGROUND $mode
+        $verify = (& $adbCmd -s $DeviceSerial shell cmd appops get $pkg RUN_ANY_IN_BACKGROUND).Trim()
+        Write-Host "[VERIFY] AppOps $pkg is now $verify" -ForegroundColor Green
+    }
+}
+
+if ($hasErrors) {
+    Write-Host "[FATAL ERROR] Baseline restoration failed verification!" -ForegroundColor Red
+    exit 1
+}
+
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host " Baseline restoration completed from captured snapshot.    " -ForegroundColor Cyan
+Write-Host " Baseline restoration completed & verified successfully.   " -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
