@@ -31,6 +31,7 @@ class OptimizationControllerReadinessTest {
             safetyGovernor = SafetyGovernor(),
             actionExecutor = SystemActionExecutor(service, SafetyGovernor(), BaselineRepository()),
             shizukuConnection = connection,
+            baselineRepository = BaselineRepository(),
             scope = this
         )
 

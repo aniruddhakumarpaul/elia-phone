@@ -34,7 +34,8 @@ class MainActivityStateMappingTest {
             profileResolver = ProfileResolver(),
             safetyGovernor = safety,
             actionExecutor = executor,
-            shizukuConnection = connection
+            shizukuConnection = connection,
+            baselineRepository = repo
         )
     }
 

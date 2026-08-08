@@ -219,4 +219,24 @@ class SystemActionExecutorTest {
         assertEquals("0", restored.requestedValue)
         verify(mockUserService).setRefreshRateMode(0)
     }
+
+    @Test
+    fun testRestoreClearsExactSettingOwnershipWhenOemEffectiveRateDiffers() {
+        `when`(mockUserService.readSetting("secure", "refresh_rate_mode")).thenReturn("0", "1", "0")
+        `when`(mockUserService.setRefreshRateMode(anyInt())).thenReturn(0)
+        val executor = SystemActionExecutor(
+            mockUserService,
+            safetyGovernor,
+            baselineRepository,
+            effectiveRefreshRateReader = { 60.0f },
+            stabilizationDelayMs = 0L
+        )
+
+        assertTrue(executor.executeTransaction(SystemAction.SetRefreshRate(1), DeviceState()).success)
+        val restored = executor.restoreOriginal("REFRESH_RATE", DeviceState())
+
+        assertTrue(restored.success)
+        assertEquals(com.antigravity.smarthub.core.model.CapabilityResult.PARTIALLY_SUPPORTED, restored.capabilityResult)
+        assertTrue(restored.errorMessage!!.contains("effective display"))
+    }
 }

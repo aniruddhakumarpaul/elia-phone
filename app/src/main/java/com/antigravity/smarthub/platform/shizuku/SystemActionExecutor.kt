@@ -399,7 +399,20 @@ class SystemActionExecutor(
         val readback = service.readSetting("secure", "refresh_rate_mode")
         if (readback != raw) return ActionExecutionResult(false, raw, readback, CapabilityResult.PARTIALLY_SUPPORTED, "Refresh restoration setting verification failed", false, raw)
         val effective = verifyEffectiveRefreshRate(baseline)
-        if (effective != null && !effective.first) return ActionExecutionResult(false, raw, "setting=$readback,effective=${effective.second}", CapabilityResult.PARTIALLY_SUPPORTED, "Refresh restoration effective verification failed", false, raw)
+        if (effective != null && !effective.first) {
+            // The durable ownership boundary is the exact secure setting that Smart Hub
+            // captured and restored. Some OEM/display states can report a different
+            // physical refresh rate while the secure setting is correct; that is a
+            // capability limitation, not evidence that Smart Hub still owns the setting.
+            return ActionExecutionResult(
+                success = true,
+                baselineCaptured = raw,
+                verifiedValue = "setting=$readback,effective=${effective.second}",
+                capabilityResult = CapabilityResult.PARTIALLY_SUPPORTED,
+                errorMessage = "Refresh setting restored; effective display remained ${effective.second}Hz",
+                requestedValue = raw
+            )
+        }
         return ActionExecutionResult(true, raw, readback, if (effectiveRefreshRateReader == null) CapabilityResult.PARTIALLY_SUPPORTED else CapabilityResult.SUPPORTED, requestedValue = raw)
     }
 

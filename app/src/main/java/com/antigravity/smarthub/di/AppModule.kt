@@ -132,7 +132,8 @@ object AppModule {
         actionLedger: ActionLedger,
         settingsRepository: OptimizationSettingsRepository,
         @ApplicationContext context: Context,
-        appClassifier: AppClassifier
+        appClassifier: AppClassifier,
+        baselineRepository: BaselineRepository
     ): OptimizationController {
         return OptimizationController(
             telemetryAggregator = telemetryAggregator,
@@ -144,7 +145,8 @@ object AppModule {
             actionLedger = actionLedger,
             settingsRepository = settingsRepository,
             appContext = context,
-            appClassifier = appClassifier
+            appClassifier = appClassifier,
+            baselineRepository = baselineRepository
         )
     }
 

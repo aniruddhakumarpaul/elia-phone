@@ -85,7 +85,7 @@ class OptimizationController(
     private val settingsRepository: OptimizationSettingsRepository = OptimizationSettingsRepository(),
     private val appContext: Context? = null,
     private val appClassifier: AppClassifier = AppClassifier(),
-    private val baselineRepository: BaselineRepository = BaselineRepository(),
+    private val baselineRepository: BaselineRepository,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
 ) {
     private val _uiState = MutableStateFlow(ControllerUiState())
@@ -431,9 +431,17 @@ class OptimizationController(
             val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
             appOps?.noteOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName) == AppOpsManager.MODE_ALLOWED
         } catch (_: Exception) { false }
-        val component = ComponentName(context, com.antigravity.smarthub.platform.accessibility.SmartHubAccessibilityService::class.java).flattenToString()
-        val enabledServices = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
-        _uiState.update { it.copy(usageAccessGranted = usage, accessibilityOptIn = enabledServices.split(':').contains(component)) }
+        val component = try {
+            ComponentName(context, com.antigravity.smarthub.platform.accessibility.SmartHubAccessibilityService::class.java).flattenToString()
+        } catch (_: Exception) {
+            null
+        }
+        val enabledServices = try {
+            Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
+        } catch (_: Exception) {
+            ""
+        }
+        _uiState.update { it.copy(usageAccessGranted = usage, accessibilityOptIn = component != null && enabledServices.split(':').contains(component)) }
     }
 
     private fun recordResult(
