@@ -1,0 +1,14 @@
+# System Command Audit Matrix
+
+Every system command executed by Smart Hub is pre-validated, typed, and assigned a explicit baseline query, mutation command, verification command, and rollback procedure.
+
+| Command ID | Target Action | Privilege | Baseline Read Command | Mutation Command | Verification Command | Rollback Command | Risks | Decision |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `CMD_REFRESH_RATE_120` | Force 120Hz Refresh Rate | Shizuku / SecureSettings | `settings get secure refresh_rate_mode` | `settings put secure refresh_rate_mode 0` | Reread `secure refresh_rate_mode` == `0` | `settings put secure refresh_rate_mode <baseline>` | Increased display battery draw | **IMPLEMENTED** |
+| `CMD_REFRESH_RATE_60` | Force 60Hz Refresh Rate | Shizuku / SecureSettings | `settings get secure refresh_rate_mode` | `settings put secure refresh_rate_mode 1` | Reread `secure refresh_rate_mode` == `1` | `settings put secure refresh_rate_mode <baseline>` | Minor scroll stutter in UI | **IMPLEMENTED** |
+| `CMD_STANDBY_RESTRICT` | Demote non-essential background app | Shizuku | `am get-standby-bucket <pkg>` | `am set-standby-bucket <pkg> restricted` | Reread `am get-standby-bucket <pkg>` == `45` | `am set-standby-bucket <pkg> <baseline>` | Delayed background notifications for app | **IMPLEMENTED** |
+| `CMD_STANDBY_ACTIVE` | Elevate foreground app | Shizuku | `am get-standby-bucket <pkg>` | `am set-standby-bucket <pkg> active` | Reread `am get-standby-bucket <pkg>` == `10` | `am set-standby-bucket <pkg> <baseline>` | Increased memory retention | **IMPLEMENTED** |
+| `CMD_APPOPS_BG_IGNORE` | Ignore background execution | Shizuku | `cmd appops get <pkg> RUN_ANY_IN_BACKGROUND` | `cmd appops set <pkg> RUN_ANY_IN_BACKGROUND ignore` | Reread `cmd appops get <pkg>` contains `ignore` | `cmd appops set <pkg> RUN_ANY_IN_BACKGROUND <baseline>` | App cannot run background tasks | **IMPLEMENTED** |
+| `CMD_CPU_MIN_FREQ_BOOST`| Raise Cortex-A78 min frequency | Root | `cat /sys/devices/system/cpu/cpufreq/policy6/scaling_min_freq` | `echo 1248000 > /sys/devices/system/cpu/cpufreq/policy6/scaling_min_freq` | Reread `scaling_min_freq` == `1248000` | `echo <baseline> > /sys/devices/system/cpu/cpufreq/policy6/scaling_min_freq` | Increased thermal generation & battery consumption | **EXPERIMENTAL** |
+| `CMD_MEMORY_COMPACT` | Trigger idle memory compaction | Root | `cat /proc/pressure/memory` | `echo 1 > /proc/sys/vm/compact_memory` | Verify CPU/memory PSI levels | None (One-shot memory compaction) | CPU spike during compaction | **EXPERIMENTAL** |
+| `CMD_PROCESS_KILL` | Aggressive process kill | - | N/A | `am force-stop <pkg>` | N/A | N/A | Application state loss, battery drain from cold restarts | **REJECTED** |
