@@ -22,7 +22,6 @@ class ShizukuServiceConnection : ServiceConnection, IBinder.DeathRecipient {
     )
         .daemon(false)
         .processNameSuffix("smarthub_user_service")
-        .debug(false)
         .version(1)
 
     fun bind() {

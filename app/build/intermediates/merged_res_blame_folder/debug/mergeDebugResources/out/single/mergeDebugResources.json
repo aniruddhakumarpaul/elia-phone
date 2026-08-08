@@ -1,0 +1,10 @@
+[
+    {
+        "merged": "com.antigravity.smarthub.app-debug-4:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "com.antigravity.smarthub.app-main-6:/mipmap-anydpi-v26/ic_launcher_round.xml"
+    },
+    {
+        "merged": "com.antigravity.smarthub.app-debug-4:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "com.antigravity.smarthub.app-main-6:/mipmap-anydpi-v26/ic_launcher.xml"
+    }
+]
