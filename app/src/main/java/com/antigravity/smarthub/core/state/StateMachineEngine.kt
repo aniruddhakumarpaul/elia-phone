@@ -38,25 +38,23 @@ class StateMachineEngine {
         val base = state.baseState
         val targetCandidate = determineTargetProfile(state)
 
-        // Rule 1: Immediate escalation for P0_THERMAL_EMERGENCY
-        if (targetCandidate == SmartHubProfile.P0_THERMAL_EMERGENCY) {
-            currentProfile = targetCandidate
-            candidateProfile = null
-            candidateSinceMs = 0L
-            return buildResolvedState(currentProfile, base, state)
-        }
-
-        // Rule 2: Candidate Debouncing Hysteresis
         if (targetCandidate != currentProfile) {
-            if (candidateProfile != targetCandidate) {
-                // New candidate state detected
+            val requiredDwellMs = when {
+                targetCandidate == SmartHubProfile.P0_THERMAL_EMERGENCY -> 0L
+                targetCandidate == SmartHubProfile.P3_GAMING_HIGH_LOAD -> 0L
+                currentProfile == SmartHubProfile.P3_GAMING_HIGH_LOAD -> 3000L
+                else -> 1000L
+            }
+
+            if (requiredDwellMs == 0L) {
+                currentProfile = targetCandidate
+                candidateProfile = null
+                candidateSinceMs = 0L
+            } else if (candidateProfile != targetCandidate) {
                 candidateProfile = targetCandidate
                 candidateSinceMs = currentTimeMs
             } else {
-                // Candidate state persists. Check debounce threshold (e.g. 3000ms debounce for leaving Gaming profile)
                 val candidateAgeMs = currentTimeMs - candidateSinceMs
-                val requiredDwellMs = if (currentProfile == SmartHubProfile.P3_GAMING_HIGH_LOAD) 3000L else 1000L
-
                 if (candidateAgeMs >= requiredDwellMs) {
                     currentProfile = targetCandidate
                     candidateProfile = null
@@ -64,7 +62,6 @@ class StateMachineEngine {
                 }
             }
         } else {
-            // Target matches current profile - clear candidate
             candidateProfile = null
             candidateSinceMs = 0L
         }
